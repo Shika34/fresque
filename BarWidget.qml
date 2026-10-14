@@ -119,22 +119,14 @@ BarWidget {
     }
   }
 
+  // The IPC surface (open/close/toggle/next) lives on the panel, not here:
+  // the panel owns the id's command target the same way omarchy.weather does,
+  // and a handler on the bar widget would only ever be shadowed by it.
   Process {
     id: nextProcess
     command: []
     stdout: StdioCollector { waitForEnd: true }
     onExited: root.working = false
-  }
-
-  IpcHandler {
-    target: "mitch.fresque"
-
-    function next(): void { root.nextWallpaper() }
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.togglePanel() }
   }
 
   // A single glyph, so a content-width slot is right: BarIconButton would pin

@@ -168,6 +168,19 @@ Panel {
     }
   }
 
+  // The panel owns the plugin's command target: `omarchy-shell mitch.fresque
+  // next` lands here even though the bar widget is what people click.
+  IpcHandler {
+    target: root.ipcTarget
+
+    function next(): void { root.nextWallpaper() }
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
