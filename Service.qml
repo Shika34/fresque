@@ -137,6 +137,26 @@ Item {
     onTriggered: root.rotate()
   }
 
+  // Temporary probe: `omarchy-shell fresquedbg dump`.
+  IpcHandler {
+    target: "fresquedbg"
+
+    function dump(): string {
+      return JSON.stringify({
+        rotateMinutes: root.rotateMinutes,
+        intervalMs: root.intervalMs,
+        appliedAt: root.appliedAt,
+        retryAt: root.retryAt,
+        timerRunning: rotateTimer.running,
+        timerInterval: rotateTimer.interval,
+        configLoaded: root.configLoaded,
+        stateLoaded: root.stateLoaded,
+        freshInstall: root.freshInstall,
+        now: Date.now()
+      })
+    }
+  }
+
   Process {
     id: bootstrapProcess
     command: []
