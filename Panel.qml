@@ -184,13 +184,17 @@ Panel {
       return JSON.stringify({
         opened: root.opened,
         hasBar: root.bar !== null && root.bar !== undefined,
-        hasAnchor: root.anchorItem !== null && root.anchorItem !== undefined,
-        hasHost: root.hostWidget !== null && root.hostWidget !== undefined,
         rotate: root.rotateMinutes,
         path: root.current.path,
-        source: root.current.source,
-        enabled: Model.countEnabled(root.enabledSources),
-        ctrl: typeof root.controller
+        ctrl: typeof root.controller,
+        contentW: content.width,
+        contentH: content.height,
+        contentImplicitH: content.implicitHeight,
+        panelW: panel.width,
+        panelH: panel.height,
+        panelContentW: panel.contentWidth,
+        panelContentH: panel.contentHeight,
+        keyCatcherH: keyCatcher.height
       })
     }
   }
