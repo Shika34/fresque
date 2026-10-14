@@ -17,7 +17,7 @@ SEEN_FILE="$STATE_DIR/seen.tsv"
 INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 
-CONFIG_VERSION=2
+CONFIG_VERSION=3
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
