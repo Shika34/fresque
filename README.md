@@ -15,9 +15,9 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Four sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NASA's image library, and Unsplash photographs served through Picsum |
+| **Four sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, Konachan's 4K anime art, and Unsplash photographs served through Picsum |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, and the file's real size is measured again after the download |
-| **A theme filter** | Nature, Space, Architecture, Animals, Photos. A theme that is off is never queried, so nothing from it can reach your screen |
+| **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen |
 | **"Not this one"** | The picture on screen is blocked and replaced in one click. It will not come back |
 | **Change automatically** | 1 day (default), 6 h, 3 h, 1 h, 30 min, 15 min, 5 min, or off |
 | **A library with a ceiling** | `~/Pictures/Fresque/` holds the images and nothing else. It is trimmed to your limit (30 by default), oldest first, and never drops the wallpaper you are looking at. All the metadata lives in the state directory instead |
@@ -28,13 +28,14 @@ then takes a new one every day.
 | Source | What it serves | Licence |
 |---|---|---|
 | Bing | The day's photograph, always, whatever themes are on | Bing, credited to its author |
-| Wikimedia Commons | Featured and quality photography, by theme | Free licence per image, shown in the panel |
-| NASA | Space and Earth imagery, by theme | Public domain |
+| Wikimedia Commons | Featured and quality photography, for the photographic themes | Free licence per image, shown in the panel |
+| Konachan | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
 
-Bing and Unsplash cannot be filtered by theme, because the one is a single daily
-picture and the other carries no tags. The panel dims a source when the themes
-you picked leave it nothing to serve.
+Every request to Konachan is pinned to the safe rating and to your screen size,
+so nothing else can come back from it. Bing and Unsplash cannot be filtered by
+theme, because the one is a single daily picture and the other carries no tags.
+The panel dims a source when the themes you picked leave it nothing to serve.
 
 ## Usage
 
@@ -66,8 +67,8 @@ fresque clean 40                        # keep the newest 40 images
 fresque touch                           # restart the rotation clock
 fresque config set rotateMinutes 60     # 0, 5, 15, 30, 60, 180, 360, 1440
 fresque config set keepLast 50          # how many images the library may hold
-fresque config set themes.space false   # turn a theme off
-fresque config set sources.nasa false   # turn a source off
+fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
+fresque config set sources.konachan false  # turn a source off (bing wikimedia konachan picsum)
 ```
 
 The script lives at `~/.config/omarchy/plugins/mitch.fresque/bin/fresque`.

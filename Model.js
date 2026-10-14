@@ -10,7 +10,7 @@
 var SOURCES = [
   { id: "bing",      label: "Bing",      themes: ["nature", "space", "architecture", "animals", "photos"] },
   { id: "wikimedia", label: "Wikimedia", themes: ["nature", "space", "architecture", "animals"] },
-  { id: "nasa",      label: "NASA",      themes: ["nature", "space", "animals"] },
+  { id: "konachan",  label: "Konachan",  themes: ["anime"] },
   { id: "picsum",    label: "Unsplash",  themes: ["photos"] }
 ]
 
@@ -19,7 +19,8 @@ var THEMES = [
   { id: "space" },
   { id: "architecture" },
   { id: "animals" },
-  { id: "photos" }
+  { id: "photos" },
+  { id: "anime" }
 ]
 
 // The intervals the panel offers and the only values bin/fresque accepts. The
@@ -63,6 +64,7 @@ var STRINGS = {
     theme_architecture: "Architecture",
     theme_animals: "Animals",
     theme_photos: "Photos",
+    theme_anime: "Anime",
     anyTheme: "any theme"
   },
   fr: {
@@ -96,6 +98,7 @@ var STRINGS = {
     theme_architecture: "Architecture",
     theme_animals: "Animaux",
     theme_photos: "Photos",
+    theme_anime: "Anime",
     anyTheme: "tous les thèmes"
   }
 }
