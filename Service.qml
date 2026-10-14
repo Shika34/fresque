@@ -7,7 +7,7 @@ import "Model.js" as Model
 //
 // It owns no UI and no state of its own: the config file is the input, the CLI
 // is the output, and the timestamps the CLI writes are the clock. That keeps
-// the three surfaces decoupled — the shell injects `settings` into bar widgets
+// the three surfaces decoupled, the shell injects `settings` into bar widgets
 // only, so a service that depended on injected config could not see it.
 Item {
   id: root
@@ -30,7 +30,7 @@ Item {
   property bool stateLoaded: false
   // A missing config file is what a fresh install looks like: that is the only
   // case where Fresque installs a first wallpaper by itself. A config that is
-  // present — even with rotation off — is a decision, and the service leaves
+  // present, even with rotation off, is a decision, and the service leaves
   // the wallpaper alone.
   property bool freshInstall: false
 
@@ -155,8 +155,8 @@ Item {
     command: []
     stdout: StdioCollector { waitForEnd: true }
     onExited: {
-      // Success and failure both land in current.json — `appliedAt` on one,
-      // `retryAt` on the other — so reloading is all the rescheduling this
+      // Success and failure both land in current.json, `appliedAt` on one,
+      // `retryAt` on the other, so reloading is all the rescheduling this
       // needs, including the case where the write kept the same mtime.
       stateView.reload()
       configView.reload()
