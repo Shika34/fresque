@@ -179,24 +179,6 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    // Temporary: read the panel's live state back out of the running shell.
-    function dbg(): string {
-      return JSON.stringify({
-        opened: root.opened,
-        hasBar: root.bar !== null && root.bar !== undefined,
-        rotate: root.rotateMinutes,
-        path: root.current.path,
-        ctrl: typeof root.controller,
-        contentW: content.width,
-        contentH: content.height,
-        contentImplicitH: content.implicitHeight,
-        panelW: panel.width,
-        panelH: panel.height,
-        panelContentW: panel.contentWidth,
-        panelContentH: panel.contentHeight,
-        keyCatcherH: keyCatcher.height
-      })
-    }
   }
 
   KeyboardPanel {

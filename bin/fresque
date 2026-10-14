@@ -84,12 +84,12 @@ cfg() {
     jq -r --arg k "$1" '.[$k] // ""' <<<"$DEFAULT_CONFIG"
 }
 
-# Writes are atomic: a half-written config would take the rotation service and
-# the panel down with it.
+# Written in place rather than through a temporary file + rename: a rename
+# replaces the inode, which silently breaks every inotify watcher the shell
+# holds on this path (the panel and the service both watch it). The file is a
+# few hundred bytes, so a single write is as good as it needs to be.
 cfg_write() {
-  local tmp="$CONFIG_FILE.new.$$"
-  printf '%s\n' "$1" >"$tmp" || die "cannot write $CONFIG_FILE"
-  mv -f "$tmp" "$CONFIG_FILE"
+  printf '%s\n' "$1" >"$CONFIG_FILE" || die "cannot write $CONFIG_FILE"
 }
 
 cfg_set() {
@@ -513,21 +513,22 @@ write_current() {
     resolution: ((($p.width // 0) | tostring) + "x" + (($p.height // 0) | tostring)),
     appliedAt: $at,
     retryAt: 0
-  }' >"$CURRENT_FILE.tmp.$$" && mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  }' >"$CURRENT_FILE"
 }
 
 # After a failure the next attempt is due in five minutes rather than after a
 # whole interval: an offline laptop should not spend the day with nothing.
 note_failure() {
   ensure_dir "$STATE_DIR"
-  local at
+  local at cur
   at=$(now_ms)
-  if [[ -s $CURRENT_FILE ]]; then
-    jq -c --argjson r "$((at + RETRY_MS))" '.retryAt = $r' "$CURRENT_FILE" >"$CURRENT_FILE.tmp.$$" &&
-      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  # The file is read into a variable first: a redirect into a path that is
+  # also the input truncates it before jq ever sees it.
+  cur=$(cat "$CURRENT_FILE" 2>/dev/null)
+  if [[ -n $cur ]]; then
+    jq -c --argjson r "$((at + RETRY_MS))" '.retryAt = $r' <<<"$cur" >"$CURRENT_FILE"
   else
-    jq -cn --argjson r "$((at + RETRY_MS))" '{retryAt: $r, appliedAt: 0}' >"$CURRENT_FILE.tmp.$$" &&
-      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+    jq -cn --argjson r "$((at + RETRY_MS))" '{retryAt: $r, appliedAt: 0}' >"$CURRENT_FILE"
   fi
 }
 
@@ -628,14 +629,13 @@ cmd_init() {
 # from now instead of firing on the spot.
 cmd_touch() {
   ensure_dir "$STATE_DIR"
-  local at
+  local at cur
   at=$(now_ms)
-  if [[ -s $CURRENT_FILE ]]; then
-    jq -c --argjson at "$at" '.appliedAt = $at | .retryAt = 0' "$CURRENT_FILE" >"$CURRENT_FILE.tmp.$$" &&
-      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  cur=$(cat "$CURRENT_FILE" 2>/dev/null)
+  if [[ -n $cur ]]; then
+    jq -c --argjson at "$at" '.appliedAt = $at | .retryAt = 0' <<<"$cur" >"$CURRENT_FILE"
   else
-    jq -cn --argjson at "$at" '{appliedAt: $at, retryAt: 0}' >"$CURRENT_FILE.tmp.$$" &&
-      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+    jq -cn --argjson at "$at" '{appliedAt: $at, retryAt: 0}' >"$CURRENT_FILE"
   fi
 }
 
