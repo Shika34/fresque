@@ -33,6 +33,8 @@ Item {
   // present — even with rotation off — is a decision, and the service leaves
   // the wallpaper alone.
   property bool freshInstall: false
+  property int configLoads: 0
+  property string lastConfigRaw: ""
 
   readonly property double intervalMs: rotateMinutes > 0 ? rotateMinutes * 60000 : 0
 
@@ -44,6 +46,8 @@ Item {
   }
 
   function applyConfig(raw) {
+    lastConfigRaw = String(raw).slice(0, 200)
+    configLoads = configLoads + 1
     var config = Model.parseJson(raw, {}, 65536)
     var minutes = Number(config.rotateMinutes)
     rotateMinutes = isFinite(minutes) && minutes >= 0 ? Math.round(minutes) : Model.DEFAULT_MINUTES
@@ -152,6 +156,8 @@ Item {
         configLoaded: root.configLoaded,
         stateLoaded: root.stateLoaded,
         freshInstall: root.freshInstall,
+        configLoads: root.configLoads,
+        lastConfigRaw: root.lastConfigRaw,
         now: Date.now()
       })
     }
