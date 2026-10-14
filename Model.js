@@ -15,24 +15,16 @@ var SOURCES = [
 ]
 
 var THEMES = [
-  { id: "nature",       label: "Nature" },
-  { id: "space",        label: "Space" },
-  { id: "architecture", label: "Architecture" },
-  { id: "animals",      label: "Animals" },
-  { id: "photos",       label: "Photos" }
+  { id: "nature" },
+  { id: "space" },
+  { id: "architecture" },
+  { id: "animals" },
+  { id: "photos" }
 ]
 
-// The intervals the panel offers and the only values bin/fresque accepts.
-var INTERVALS = [
-  { label: "Off",    minutes: 0 },
-  { label: "5 min",  minutes: 5 },
-  { label: "15 min", minutes: 15 },
-  { label: "30 min", minutes: 30 },
-  { label: "1 h",    minutes: 60 },
-  { label: "3 h",    minutes: 180 },
-  { label: "6 h",    minutes: 360 },
-  { label: "1 day",  minutes: 1440 }
-]
+// The intervals the panel offers and the only values bin/fresque accepts. The
+// labels are looked up at render time so they follow the system language.
+var INTERVAL_MINUTES = [0, 5, 15, 30, 60, 180, 360, 1440]
 
 var DEFAULT_MINUTES = 1440
 
@@ -48,7 +40,7 @@ var STRINGS = {
     working: "Searching",
     skip: "Not this one",
     openSource: "See the source",
-    closeHint: "Esc closes, n takes the next one",
+    closeHint: "Esc closes, n takes the next one, s skips this one",
     empty: "No wallpaper yet",
     loading: "Loading",
     offline: "No source answered, retrying in 5 minutes",
@@ -57,11 +49,20 @@ var STRINGS = {
     inMinutes: "In {n} min",
     inHours: "In {n} h",
     inDays: "In {n} days",
-    noCredit: "",
-    every: "Every {label}",
-    sourcesOff: "All sources are off",
-    themesOff: "All themes are off",
-    library: "{n} wallpapers kept",
+    inOneDay: "In 1 day",
+    interval_0: "Off",
+    interval_5: "5 min",
+    interval_15: "15 min",
+    interval_30: "30 min",
+    interval_60: "1 h",
+    interval_180: "3 h",
+    interval_360: "6 h",
+    interval_1440: "1 day",
+    theme_nature: "Nature",
+    theme_space: "Space",
+    theme_architecture: "Architecture",
+    theme_animals: "Animals",
+    theme_photos: "Photos",
     anyTheme: "any theme"
   },
   fr: {
@@ -72,7 +73,7 @@ var STRINGS = {
     working: "Recherche",
     skip: "Pas celui-ci",
     openSource: "Voir la source",
-    closeHint: "Échap ferme, n passe au suivant",
+    closeHint: "Échap ferme, n suivant, s pas celui-ci",
     empty: "Pas encore de fond d'écran",
     loading: "Chargement",
     offline: "Aucune source n'a répondu, nouvel essai dans 5 minutes",
@@ -81,11 +82,20 @@ var STRINGS = {
     inMinutes: "Dans {n} min",
     inHours: "Dans {n} h",
     inDays: "Dans {n} jours",
-    noCredit: "",
-    every: "Toutes les {label}",
-    sourcesOff: "Toutes les sources sont désactivées",
-    themesOff: "Tous les thèmes sont désactivés",
-    library: "{n} fonds conservés",
+    inOneDay: "Dans 1 jour",
+    interval_0: "Désactivé",
+    interval_5: "5 min",
+    interval_15: "15 min",
+    interval_30: "30 min",
+    interval_60: "1 h",
+    interval_180: "3 h",
+    interval_360: "6 h",
+    interval_1440: "1 jour",
+    theme_nature: "Nature",
+    theme_space: "Espace",
+    theme_architecture: "Architecture",
+    theme_animals: "Animaux",
+    theme_photos: "Photos",
     anyTheme: "tous les thèmes"
   }
 }
@@ -142,19 +152,18 @@ function sourceLabel(id) {
 function themeLabel(id) {
   if (id === "any") return t("anyTheme")
   for (var i = 0; i < THEMES.length; i++)
-    if (THEMES[i].id === id) return THEMES[i].label
+    if (THEMES[i].id === id) return t("theme_" + THEMES[i].id)
   return ""
 }
 
 function intervalLabel(minutes) {
-  for (var i = 0; i < INTERVALS.length; i++)
-    if (INTERVALS[i].minutes === minutes) return INTERVALS[i].label
-  return minutes + " min"
+  var m = Number(minutes) || 0
+  return t("interval_" + m)
 }
 
 function isKnownInterval(minutes) {
-  for (var i = 0; i < INTERVALS.length; i++)
-    if (INTERVALS[i].minutes === minutes) return true
+  for (var i = 0; i < INTERVAL_MINUTES.length; i++)
+    if (INTERVAL_MINUTES[i] === Number(minutes)) return true
   return false
 }
 
@@ -200,7 +209,8 @@ function dueLabel(appliedAt, retryAt, minutes, includePrefix) {
   if (mins < 60) return t("inMinutes", { n: mins })
   var hours = Math.floor(mins / 60)
   if (hours < 24) return t("inHours", { n: hours })
-  return t("inDays", { n: Math.round(hours / 24) })
+  var days = Math.round(hours / 24)
+  return days <= 1 ? t("inOneDay") : t("inDays", { n: days })
 }
 
 function barTooltip(state) {

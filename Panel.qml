@@ -339,11 +339,11 @@ Panel {
             spacing: Style.space(4)
 
             Repeater {
-              model: Model.INTERVALS
+              model: Model.INTERVAL_MINUTES
 
               Rectangle {
-                required property var modelData
-                readonly property bool active: root.rotateMinutes === modelData.minutes
+                required property int modelData
+                readonly property bool active: root.rotateMinutes === modelData
 
                 width: intervalLabel.implicitWidth + Style.space(14)
                 height: Style.space(24)
@@ -357,7 +357,7 @@ Panel {
                 Text {
                   id: intervalLabel
                   anchors.centerIn: parent
-                  text: modelData.label
+                  text: Model.intervalLabel(modelData)
                   color: active
                     ? Style.selectedStateColor(root.contentForeground, Color.accent)
                     : root.contentForeground
@@ -371,7 +371,7 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.setInterval(modelData.minutes)
+                  onClicked: root.setInterval(modelData)
                 }
               }
             }
@@ -414,7 +414,7 @@ Panel {
                 Text {
                   id: themeLabelText
                   anchors.centerIn: parent
-                  text: modelData.label
+                  text: Model.themeLabel(modelData.id)
                   color: active
                     ? Style.selectedStateColor(root.contentForeground, Color.accent)
                     : root.contentForeground
