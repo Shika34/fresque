@@ -19,6 +19,7 @@ then takes a new one every day.
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, and the file's real size is measured again after the download |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen |
 | **"Not this one"** | The picture on screen is blocked and replaced in one click. It will not come back |
+| **Favorites** | One click moves the picture on screen into `~/Pictures/Fresque/Favorites/`. Favorites are never pruned, and "Only favorites" turns the rotation into a loop over what you kept |
 | **Change automatically** | 1 day (default), 6 h, 3 h, 1 h, 30 min, 15 min, 5 min, or off |
 | **A library with a ceiling** | `~/Pictures/Fresque/` holds the images and nothing else. It is trimmed to your limit (30 by default), oldest first, and never drops the wallpaper you are looking at. All the metadata lives in the state directory instead |
 | **Credits** | The panel shows the source, the size, the theme and the author, with a link to the original page |
@@ -45,10 +46,12 @@ The panel dims a source when the themes you picked leave it nothing to serve.
 | Right click | Next wallpaper |
 | `n` while the panel is open | Next wallpaper |
 | `s` while the panel is open | Block this one and take another |
+| `f` while the panel is open | Add or remove the current wallpaper from favorites |
 | `Esc` | Closes the panel |
 
-The panel is three rows of choices and two buttons. The intervals, the themes and
-the sources all start in the state you would have picked anyway.
+The panel is four rows of choices and four buttons, all centred. The intervals,
+the themes, the sources and the favorites switch all start in the state you
+would have picked anyway.
 
 The interface follows your system language. English and French are built in, and
 anything else falls back to English.
@@ -59,14 +62,17 @@ The panel is a convenience, not a requirement. The engine is a script in the
 plugin folder and it does everything the panel does.
 
 ```sh
-fresque status                          # current wallpaper, rotation, themes, sources as JSON
+fresque status                          # current wallpaper, rotation, themes, sources, favorites as JSON
 fresque next                            # download and apply the next wallpaper
 fresque skip                            # block this one and take another
+fresque favorite                        # move the current wallpaper into Favorites
+fresque unfavorite                      # move it back into the library
 fresque verify                          # ask every source and theme for one answer
 fresque clean 40                        # keep the newest 40 images
 fresque touch                           # restart the rotation clock
 fresque config set rotateMinutes 60     # 0, 5, 15, 30, 60, 180, 360, 1440
 fresque config set keepLast 50          # how many images the library may hold
+fresque config set favoritesOnly true   # rotate over the favorites only
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
 fresque config set sources.konachan false  # turn a source off (bing wikimedia konachan picsum)
 ```
@@ -85,6 +91,7 @@ public API and the images are the ones the site already serves to the public.
 | Path | Role |
 |---|---|
 | `~/Pictures/Fresque/` | The wallpapers, and only the wallpapers |
+| `~/Pictures/Fresque/Favorites/` | The ones you kept. Never pruned, never touched by the size limit |
 | `~/.config/omarchy/fresque.json` | Settings |
 | `~/.local/state/fresque/` | Current wallpaper, credits, history, blocked images |
 | `~/.config/omarchy/backgrounds/<theme>/` | Links to the applied images, so they also show up in Omarchy's own background picker |
