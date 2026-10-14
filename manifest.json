@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "mitch.fresque",
+  "name": "Fresque",
+  "version": "1.0.0",
+  "author": "Mitch",
+  "license": "MIT",
+  "description": "Des fonds d'écran de qualité, sans réglage : quatre sources en libre accès, rotation journalière par défaut, bibliothèque locale.",
+  "homepage": "https://github.com/mitch/fresque",
+  "repository": "https://github.com/mitch/fresque",
+  "keywords": [
+    "wallpaper",
+    "background",
+    "wallhaven",
+    "photos",
+    "rotation"
+  ],
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Fresque",
+    "description": "Fond d'écran du jour, rotation et sources",
+    "category": "Appearance",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

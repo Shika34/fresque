@@ -1,0 +1,760 @@
+#!/bin/bash
+# fresque — des fonds d'écran de qualité pour Omarchy, sans configuration.
+#
+# Tout le réseau et tout le JSON vivent ici. Les surfaces QML (pastille de
+# barre, panneau, service de rotation) ne font qu'appeler ce script et lire le
+# JSON qu'il imprime sur stdout : elles ne construisent jamais de commande.
+#
+# Aucune clé d'API n'est requise pour les quatre sources livrées, et l'image
+# appliquée est conservée dans une bibliothèque locale — la rotation continue
+# donc de fonctionner hors ligne.
+
+set -uo pipefail
+
+CONFIG_FILE="${FRESQUE_CONFIG:-$HOME/.config/omarchy/fresque.json}"
+STATE_DIR="${FRESQUE_STATE_DIR:-$HOME/.local/state/fresque}"
+CURRENT_FILE="$STATE_DIR/current.json"
+SEEN_FILE="$STATE_DIR/seen.tsv"
+HASH_FILE="$STATE_DIR/hashes.tsv"
+
+CONFIG_VERSION=1
+FILE_PREFIX="fresque-"
+# How long to wait before retrying after a failed rotation, in milliseconds.
+RETRY_MS=300000
+# How many ids to remember so a rotation never repeats itself.
+SEEN_KEEP=400
+# 64 MiB is far above any wallpaper this plugin fetches and far below anything
+# that could exhaust memory or disk if a source misbehaves.
+MAX_IMAGE_BYTES=67108864
+MAX_JSON_BYTES=8388608
+
+WH_API="https://wallhaven.cc/api/v1"
+
+die() { echo "fresque: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- requests
+
+# HTTPS is imposed for the request *and* every redirect: a source or a
+# compromised CDN cannot downgrade a fetch to plain HTTP.
+curl_json() {
+  curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_JSON_BYTES" \
+    --max-time 25 --silent --show-error --location --fail \
+    -H 'Accept: application/json' "$1"
+}
+
+curl_file() {
+  curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_IMAGE_BYTES" \
+    --max-time 180 --silent --show-error --location --fail \
+    -o "$2" "$1"
+}
+
+urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
+
+now_ms() { date +%s%3N; }
+
+# ---------------------------------------------------------------- config
+
+DEFAULT_CONFIG='{
+  "version": 1,
+  "rotateMinutes": 1440,
+  "sources": { "wallhaven": true, "bing": true, "wikimedia": true, "picsum": true },
+  "keepLast": 24,
+  "expose": true,
+  "library": ""
+}'
+
+CONFIG_KEYS=" rotateMinutes keepLast expose library "
+
+ensure_config() {
+  if [[ -f $CONFIG_FILE ]]; then
+    local version
+    version=$(jq -r '.version // 0' "$CONFIG_FILE" 2>/dev/null || echo 0)
+    [[ $version == "$CONFIG_VERSION" ]] && return 0
+    cp -f "$CONFIG_FILE" "$CONFIG_FILE.bak" 2>/dev/null
+    echo "fresque: config was schema v$version, replaced with v$CONFIG_VERSION" >&2
+  fi
+  ensure_dir "$(dirname "$CONFIG_FILE")"
+  printf '%s\n' "$DEFAULT_CONFIG" >"$CONFIG_FILE" || die "cannot write $CONFIG_FILE"
+}
+
+cfg() {
+  ensure_config
+  jq -r --arg k "$1" --argjson d "$DEFAULT_CONFIG" \
+    'if (.[$k] == null) then ($d[$k] // "") else .[$k] end' "$CONFIG_FILE" 2>/dev/null ||
+    jq -r --arg k "$1" '.[$k] // ""' <<<"$DEFAULT_CONFIG"
+}
+
+# Writes are atomic: a half-written config would take the rotation service and
+# the panel down with it.
+cfg_write() {
+  local tmp="$CONFIG_FILE.new.$$"
+  printf '%s\n' "$1" >"$tmp" || die "cannot write $CONFIG_FILE"
+  mv -f "$tmp" "$CONFIG_FILE"
+}
+
+cfg_set() {
+  ensure_config
+  local key=$1 value=${2-} tmp
+  case $key in
+    rotateMinutes)
+      # Only the intervals the panel offers, plus off. A typo here would pin
+      # the wallpaper forever.
+      case $value in 0|5|15|30|60|180|360|1440) ;; *) die "rotateMinutes must be one of 0 5 15 30 60 180 360 1440, got: $value" ;; esac
+      tmp=$(jq --argjson v "$value" '.rotateMinutes = $v' "$CONFIG_FILE") ;;
+    keepLast)
+      [[ $value =~ ^[0-9]{1,4}$ ]] || die "keepLast must be a whole number, got: $value"
+      tmp=$(jq --argjson v "$value" '.keepLast = $v' "$CONFIG_FILE") ;;
+    expose)
+      case $value in true|false) ;; *) die "expose must be true or false, got: $value" ;; esac
+      tmp=$(jq --argjson v "$value" '.expose = $v' "$CONFIG_FILE") ;;
+    library)
+      # An absolute path or empty (which means "the default library").
+      [[ -z $value || $value == /* ]] || die "library must be an absolute path or empty"
+      tmp=$(jq --arg v "$value" '.library = $v' "$CONFIG_FILE") ;;
+    sources.*)
+      local src=${key#sources.}
+      is_source "$src" || die "unknown source: $src"
+      case $value in true|false) ;; *) die "source state must be true or false, got: $value" ;; esac
+      tmp=$(jq --arg s "$src" --argjson v "$value" '.sources[$s] = $v' "$CONFIG_FILE") ;;
+    *) die "unknown config key: $key (try: $CONFIG_KEYS)" ;;
+  esac
+  [[ -n $tmp ]] || die "failed to update $key"
+  cfg_write "$tmp"
+}
+
+# ---------------------------------------------------------------- files
+
+# Never write into a path that is not a plain directory owned by the user: a
+# symlink planted at a predictable location must not redirect our writes.
+ensure_dir() {
+  local dir=$1
+  if [[ -L $dir ]]; then
+    if [[ $(readlink -f "$dir") != "$dir" ]]; then
+      # A symlinked path is fine when the target really is a directory we own.
+      [[ -d $dir ]] || die "$dir is a broken symlink"
+    fi
+  fi
+  mkdir -p "$dir" || die "cannot create $dir"
+  [[ -d $dir ]] || die "$dir is not a directory"
+  [[ -O $dir ]] || die "$dir is not owned by you"
+}
+
+default_library() { printf '%s' "$HOME/Pictures/Fresque"; }
+
+library_dir() {
+  local dir="${FRESQUE_LIBRARY:-}"
+  [[ -n $dir ]] || dir=$(cfg library)
+  [[ -n $dir ]] || dir=$(default_library)
+  printf '%s' "${dir/#\~/$HOME}"
+}
+
+theme_name() { cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "default"; }
+
+# The native background picker (`omarchy theme bg next`, Style > Background)
+# only cycles files that live in the theme's own folder, so the applied image
+# is hardlinked there: it costs no extra disk and makes Fresque picks part of
+# the theme's rotation for free.
+theme_dir() { printf '%s' "$HOME/.config/omarchy/backgrounds/$(theme_name)"; }
+
+# Wikipedia file titles are not filenames: they carry spaces, accents, ".jpg"
+# inside the title and " — 2021 — " annotations. Everything becomes a short
+# safe slug, and the readable title stays in the sidecar next to it.
+slugify() {
+  local s
+  s=$(printf '%s' "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E 's/\.(jpe?g|png|webp|avif|tiff?)$//' |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  printf '%s' "${s:0:60}"
+}
+
+image_ext() {
+  local u=${1%%\?*}
+  case ${u##*.} in
+    jpg|JPG|jpeg|JPEG) printf 'jpg' ;;
+    png|PNG)           printf 'png' ;;
+    webp|WEBP)         printf 'webp' ;;
+    avif|AVIF)         printf 'avif' ;;
+    *)                 printf 'jpg' ;;
+  esac
+}
+
+# A truncated body, an HTML error page or an SVG (which can reference remote
+# resources and blow up the renderer) must never become a wallpaper.
+verify_image() {
+  local file=$1 mime
+  [[ -s $file ]] || return 1
+  mime=$(file -b --mime-type "$file" 2>/dev/null) || return 1
+  case $mime in
+    image/jpeg|image/png|image/webp|image/avif) ;;
+    *) return 1 ;;
+  esac
+  # A file that claims to be 40 bytes of JPEG is not one.
+  [[ $(stat -c %s "$file") -gt 20480 ]] || return 1
+  return 0
+}
+
+# Same image from two sources should be one file on disk. The hash index is
+# what keeps this cheap: hashing the whole library on every rotation would
+# read hundreds of megabytes.
+dedupe_hash() {
+  local dest=$1 hash existing
+  hash=$(sha256sum "$dest" | cut -d' ' -f1) || return 0
+  if [[ -f $HASH_FILE ]]; then
+    existing=$(awk -F'\t' -v h="$hash" '$1==h { print $2 }' "$HASH_FILE" | head -1)
+    if [[ -n $existing && -s $existing && $existing != "$dest" ]]; then
+      rm -f "$dest"
+      ln "$existing" "$dest" 2>/dev/null || cp -f "$existing" "$dest"
+    fi
+  fi
+  ensure_dir "$STATE_DIR"
+  printf '%s\t%s\n' "$hash" "$dest" >>"$HASH_FILE" 2>/dev/null
+}
+
+set_background() {
+  local path=$1
+  # Test seam: `FRESQUE_DRY_RUN=1` exercises the whole fetch/verify/prune path
+  # without touching the desktop background or the theme folder.
+  [[ ${FRESQUE_DRY_RUN:-0} == 1 ]] && return 0
+  omarchy theme bg set "$path" >/dev/null 2>&1 && return 0
+  omarchy-theme-bg-set "$path" >/dev/null 2>&1 && return 0
+  die "failed to set the background"
+}
+
+expose_in_theme() {
+  local path=$1 dir
+  [[ ${FRESQUE_DRY_RUN:-0} == 1 ]] && return 0
+  [[ $(cfg expose) == "true" ]] || return 0
+  dir=$(theme_dir)
+  ensure_dir "$dir" || return 0
+  ln -f "$path" "$dir/$(basename "$path")" 2>/dev/null ||
+    ln -sf "$path" "$dir/$(basename "$path")" 2>/dev/null || true
+}
+
+# Keeps the newest N Fresque files in the theme folder and trims the library
+# on request. Anything without our filename prefix is left alone, and the
+# image currently on screen is never removed.
+prune_dir() {
+  local dir=$1 keep=$2 current files=() i
+  [[ -d $dir ]] || return 0
+  [[ $keep =~ ^[0-9]+$ ]] || keep=24
+  ((keep > 0)) || return 0
+  current=$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null)
+
+  while IFS= read -r -d '' f; do files+=("$f"); done < <(
+    find "$dir" -maxdepth 1 -type f -name "$FILE_PREFIX*" \
+      ! -name "*.source.json" -printf '%T@\t%p\0' 2>/dev/null | sort -zrn | cut -zf2-
+  )
+
+  for ((i = keep; i < ${#files[@]}; i++)); do
+    [[ ${files[$i]} == "$current" ]] && continue
+    rm -f "${files[$i]}" "${files[$i]}.source.json"
+  done
+}
+
+mark_seen() {
+  ensure_dir "$STATE_DIR"
+  printf '%s\t%s\n' "$1" "$2" >>"$SEEN_FILE" 2>/dev/null
+  if [[ -f $SEEN_FILE ]] && [[ $(wc -l <"$SEEN_FILE") -gt $SEEN_KEEP ]]; then
+    tail -n "$SEEN_KEEP" "$SEEN_FILE" >"$SEEN_FILE.new" && mv -f "$SEEN_FILE.new" "$SEEN_FILE"
+  fi
+}
+
+was_seen() {
+  [[ -f $SEEN_FILE ]] && grep -qxF "$1	$2" "$SEEN_FILE"
+}
+
+# ---------------------------------------------------------------- screen
+
+# The quality gate: a wallpaper must be at least as big as the screen it will
+# be cropped onto. The largest enabled monitor wins, so a 4K panel sets the
+# bar for the whole rotation.
+screen_geometry() {
+  local wh
+  wh=$(hyprctl monitors -j 2>/dev/null |
+    jq -r 'if type=="array" and length>0 then ([.[]|select(.disabled!=true)]|sort_by(.width*.height)|last|"\(.width) \(.height)") else "" end' 2>/dev/null)
+  [[ $wh =~ ^[0-9]+\ [0-9]+$ ]] || wh="1920 1080"
+  printf '%s' "$wh"
+}
+
+gcd() { local a=$1 b=$2 t; while ((b)); do t=$((a % b)); a=$b; b=$t; done; printf '%s' "$a"; }
+
+# Wallhaven only accepts a fixed set of ratio names; when the screen ratio is
+# not one of them we simply do not send the parameter and filter locally.
+screen_ratio() {
+  local wh w h g r
+  wh=$(screen_geometry); w=${wh% *}; h=${wh#* }
+  ((h > 0)) || return 0
+  g=$(gcd "$w" "$h") || return 0
+  ((g > 0)) || return 0
+  r="$((w / g))x$((h / g))"
+  case $r in
+    16x9|16x10|21x9|32x9|48x9|4x3|5x4|3x2|9x16|10x16|1x1|9x18) printf '%s' "$r" ;;
+    *) : ;;
+  esac
+}
+
+# |a - b| <= 0.15 keeps 16:9, 16:10 and 21:9 apart while tolerating the odd
+# 1.85:1 crop. A wallpaper that is far off will be visibly cut by
+# PreserveAspectCrop, which is exactly what "quality" means here.
+ratio_close() {
+  local w=$1 h=$2 tw=$3 th=$4
+  awk -v a="$w" -v b="$h" -v c="$tw" -v d="$th" \
+    'BEGIN { r1 = a / b; r2 = c / d; d1 = r1 - r2; if (d1 < 0) d1 = -d1; exit !(d1 <= 0.15) }'
+}
+
+# ---------------------------------------------------------------- sources
+
+SOURCE_IDS="wallhaven bing wikimedia picsum"
+SOURCE_WEIGHTS="wallhaven=55 bing=20 wikimedia=15 picsum=10"
+
+is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
+
+source_label() {
+  case $1 in
+    wallhaven) printf 'Wallhaven' ;;
+    bing)      printf 'Bing du jour' ;;
+    wikimedia) printf 'Wikimedia' ;;
+    picsum)    printf 'Unsplash via Picsum' ;;
+  esac
+}
+
+source_note() {
+  case $1 in
+    wallhaven) printf "Le top du mois, 4K+, catégorie générale uniquement" ;;
+    bing)      printf "L'image du jour, photographie professionnelle" ;;
+    wikimedia) printf "Images remarquables de Wikimedia Commons, licence libre" ;;
+    picsum)    printf "Photographies Unsplash, sélection fixe" ;;
+  esac
+}
+
+source_weight() { local kv; for kv in $SOURCE_WEIGHTS; do [[ ${kv%%=*} == "$1" ]] && { printf '%s' "${kv#*=}"; return; }; done; printf '0'; }
+
+source_enabled() {
+  local v
+  v=$(jq -r --arg s "$1" '.sources[$s] // false' "$CONFIG_FILE" 2>/dev/null)
+  [[ $v == "true" ]]
+}
+
+# Every source normalizes to the same record shape, so nothing downstream has
+# to know which API it came from:
+#   { source, id, full, alt, thumb, width, height, credit, link, license }
+candidates_wallhaven() {
+  local min_w=$1 min_h=$2 ratio=$3 params page last_page second
+  params="categories=100&purity=100&sorting=toplist&topRange=1M&atleast=${min_w}x${min_h}"
+  [[ -n $ratio ]] && params+="&ratios=$ratio"
+
+  # A toplist is ordered, so page 1 is the best of the month — but always
+  # serving page 1 would hand back the same 24 images forever. The listing is
+  # also short: with a 16:9 filter at 2560x1440 it runs out after a handful of
+  # pages, so a blind random page would hit an empty one a quarter of the
+  # time. Page 1 is fetched first for its `meta.last_page`, a second page is
+  # drawn from what actually exists, and both pools are merged.
+  local raw first_rows last_page page second
+  raw=$(curl_json "$WH_API/search?$params&page=1")
+  first_rows=$(jq -c '.data // []' <<<"$raw" 2>/dev/null)
+  last_page=$(jq -r '.meta.last_page // 1' <<<"$raw" 2>/dev/null)
+  [[ $(jq 'length' <<<"${first_rows:-[]}" 2>/dev/null) -gt 0 ]] || { printf '[]'; return 0; }
+  [[ $last_page =~ ^[0-9]+$ ]] || last_page=1
+  ((last_page > 8)) && last_page=8
+
+  if ((last_page > 1)); then
+    page=$((RANDOM % last_page + 1))
+    second=$(curl_json "$WH_API/search?$params&page=$page" 2>/dev/null | jq -c '.data // []' 2>/dev/null)
+    [[ -n $second && $second != "null" ]] && first_rows=$(jq -c --argjson b "$second" '. + $b' <<<"$first_rows")
+  fi
+
+  jq -c '[.[]? | {
+      source: "wallhaven",
+      id: .id,
+      full: .path,
+      alt: "",
+      thumb: (.thumbs.large // .thumbs.original),
+      width: (.dimension_x // 0),
+      height: (.dimension_y // 0),
+      credit: (.uploader.username // ""),
+      link: (.url // "https://wallhaven.cc"),
+      license: "Wallhaven — conditions du site"
+    }]' <<<"$first_rows"
+}
+
+# Bing publishes the same picture at several sizes. `_UHD` is 3840x2160 and is
+# only generated for recent images, so the 1080p variant travels along as the
+# fallback.
+candidates_bing() {
+  curl_json "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=fr-FR" |
+    jq -c '[.images[]? | {
+      source: "bing",
+      id: (.startdate // .enddate),
+      full: ("https://www.bing.com" + .urlbase + "_UHD.jpg&pid=hp"),
+      alt: ("https://www.bing.com" + (.url // "")),
+      thumb: ("https://www.bing.com" + (.url // "")),
+      width: 3840,
+      height: 2160,
+      credit: ((.title // "") + " — " + (.copyright // "")),
+      link: "https://www.bing.com",
+      license: "© Bing / auteurs cités"
+    }]'
+}
+
+# Featured pictures are picked by the Commons community, which is the closest
+# thing the free world has to an editorial board. The 3840px thumbnail is
+# fetched rather than the original: originals are sometimes 60 MB TIFFs.
+candidates_wikimedia() {
+  local min_w=$1 scaled
+  scaled=$min_w
+  ((scaled >= 3840)) || scaled=3840
+  curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:Featured_pictures_of_nature&gcmtype=file&gcmlimit=40&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=$scaled" |
+    jq -c --argjson minw "$min_w" --argjson minh "$2" '[.query.pages[]? | (.imageinfo[0] // {}) as $ii | {
+      source: "wikimedia",
+      id: ((.title // "") | sub("^File:"; "")),
+      full: ($ii.thumburl // $ii.url),
+      alt: ($ii.url // ""),
+      thumb: ($ii.thumburl // $ii.url),
+      width: ($ii.width // 0),
+      height: ($ii.height // 0),
+      credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
+      link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
+      license: ($ii.extmetadata.LicenseShortName.value // "Licence libre")
+    } | select(.width >= $minw and .height >= $minh)]'
+}
+
+# Picsum serves Unsplash photographs through its own API, so there is nothing
+# to sign up for. The image is requested at the screen's own size, which makes
+# the server do the crop instead of the renderer.
+candidates_picsum() {
+  local min_w=$1 min_h=$2 page
+  page=$((RANDOM % 12 + 1))
+  curl_json "https://picsum.photos/v2/list?page=$page&limit=40" |
+    jq -c --argjson minw "$min_w" --argjson minh "$min_h" --argjson w "$min_w" --argjson h "$min_h" \
+      '[.[]? | select(.width >= $minw and .height >= $minh) | {
+        source: "picsum",
+        id: (.id // ""),
+        full: ("https://picsum.photos/id/" + (.id // "") + "/" + ($w | tostring) + "/" + ($h | tostring)),
+        alt: (.download_url // ""),
+        thumb: ("https://picsum.photos/id/" + (.id // "") + "/800/450"),
+        width: $w,
+        height: $h,
+        credit: (.author // ""),
+        link: (.url // "https://picsum.photos"),
+        license: "Unsplash License"
+      }]'
+}
+
+fetch_candidates() {
+  local src=$1 min_w=$2 min_h=$3 ratio=$4
+  case $src in
+    wallhaven) candidates_wallhaven "$min_w" "$min_h" "$ratio" ;;
+    bing)      candidates_bing ;;
+    wikimedia) candidates_wikimedia "$min_w" "$min_h" ;;
+    picsum)    candidates_picsum "$min_w" "$min_h" ;;
+    *)         printf '[]' ;;
+  esac
+}
+
+# Weighted draw, so Wallhaven's curated toplist carries most of the rotation
+# without the other sources ever disappearing.
+pick_source() {
+  local total=0 src w pick
+  for src in $SOURCE_IDS; do
+    source_enabled "$src" || continue
+    w=$(source_weight "$src")
+    total=$((total + w))
+  done
+  ((total > 0)) || return 1
+  pick=$((RANDOM % total))
+  for src in $SOURCE_IDS; do
+    source_enabled "$src" || continue
+    w=$(source_weight "$src")
+    if ((pick < w)); then printf '%s' "$src"; return 0; fi
+    pick=$((pick - w))
+  done
+  printf 'wallhaven'
+}
+
+enabled_sources() {
+  local src out=""
+  for src in $SOURCE_IDS; do source_enabled "$src" && out+="$src "; done
+  printf '%s' "${out% }"
+}
+
+# ---------------------------------------------------------------- applying
+
+choose_candidate() {
+  local rows=$1 src id
+  # Never serve the same wallpaper twice while fresh ones remain.
+  local fresh
+  fresh=$(jq -c '[.[] | select(.full != "" and .id != "")]' <<<"$rows")
+  [[ $(jq 'length' <<<"$fresh") -gt 0 ]] || return 1
+
+  local unseen="[]"
+  while IFS= read -r row; do
+    src=$(jq -r '.source' <<<"$row"); id=$(jq -r '.id' <<<"$row")
+    was_seen "$src" "$id" && continue
+    unseen=$(jq -c --argjson r "$row" '. + [$r]' <<<"$unseen")
+  done < <(jq -c '.[]' <<<"$fresh")
+
+  [[ $(jq 'length' <<<"$unseen") -gt 0 ]] || unseen=$fresh
+  jq -c --argjson n "$(jq 'length' <<<"$unseen")" '.[ (now * 1000 | floor) % $n ]' <<<"$unseen"
+}
+
+write_current() {
+  local photo=$1 path=$2
+  ensure_dir "$STATE_DIR"
+  jq -cn --argjson p "$photo" --arg path "$path" --argjson at "$(now_ms)" '{
+    path: $path,
+    source: ($p.source // ""),
+    id: ($p.id // ""),
+    credit: ($p.credit // ""),
+    link: ($p.link // ""),
+    license: ($p.license // ""),
+    width: ($p.width // 0),
+    height: ($p.height // 0),
+    resolution: ((($p.width // 0) | tostring) + "x" + (($p.height // 0) | tostring)),
+    appliedAt: $at,
+    retryAt: 0
+  }' >"$CURRENT_FILE.tmp.$$" && mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+}
+
+# After a failure the next attempt is due in five minutes rather than after a
+# whole interval: an offline laptop should not spend the day with nothing.
+note_failure() {
+  ensure_dir "$STATE_DIR"
+  local at
+  at=$(now_ms)
+  if [[ -s $CURRENT_FILE ]]; then
+    jq -c --argjson r "$((at + RETRY_MS))" '.retryAt = $r' "$CURRENT_FILE" >"$CURRENT_FILE.tmp.$$" &&
+      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  else
+    jq -cn --argjson r "$((at + RETRY_MS))" '{retryAt: $r, appliedAt: 0}' >"$CURRENT_FILE.tmp.$$" &&
+      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  fi
+}
+
+apply_photo() {
+  local photo=$1 id src slug full alt ext dir dest tmp
+  id=$(jq -r '.id // ""' <<<"$photo")
+  src=$(jq -r '.source // ""' <<<"$photo")
+  full=$(jq -r '.full // ""' <<<"$photo")
+  alt=$(jq -r '.alt // ""' <<<"$photo")
+  [[ -n $id && -n $full ]] || die "incomplete photo record"
+  # Nothing but https ever reaches curl, whatever a source claims.
+  case $full in https://*) ;; *) die "refusing non-https image url: $full" ;; esac
+  case $alt in https://*|"") ;; *) alt="" ;; esac
+
+  ext=$(image_ext "$full")
+  slug=$(slugify "$id")
+  [[ -n $slug ]] || slug=$(printf '%s' "$id" | tr -cd 'a-z0-9')
+  dir=$(library_dir)
+  ensure_dir "$dir"
+  dest="$dir/$FILE_PREFIX$src-$slug.$ext"
+
+  if [[ ! -s $dest ]]; then
+    tmp=$(mktemp "$dir/.$FILE_PREFIX$src-$slug.XXXXXX") || die "cannot write to $dir"
+    if ! curl_file "$full" "$tmp"; then
+      if [[ -n $alt ]] && curl_file "$alt" "$tmp"; then
+        :
+      else
+        rm -f "$tmp"
+        note_failure
+        die "download failed for $src/$id"
+      fi
+    fi
+    if ! verify_image "$tmp"; then
+      rm -f "$tmp"
+      note_failure
+      die "downloaded file for $src/$id is not a usable image"
+    fi
+    mv -f "$tmp" "$dest"
+    chmod 644 "$dest"
+    dedupe_hash "$dest"
+  fi
+
+  # The sidecar travels with the image, so the credit is still there once it is
+  # just another file in the library.
+  jq -c '{source, id, credit, link, license, width, height}' <<<"$photo" >"$dest.source.json" 2>/dev/null || true
+
+  set_background "$dest"
+  expose_in_theme "$dest"
+  write_current "$photo" "$dest"
+  mark_seen "$src" "$id"
+  prune_dir "$(theme_dir)" "$(cfg keepLast)"
+  printf '%s\n' "$dest"
+}
+
+# ---------------------------------------------------------------- commands
+
+cmd_next() {
+  ensure_config
+  local wh min_w min_h ratio attempt src rows pick rc=1 enabled
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh#* }
+  ratio=$(screen_ratio)
+  enabled=$(enabled_sources)
+  [[ -n $enabled ]] || die "every source is disabled — enable one in the panel"
+
+  for attempt in 1 2 3 4; do
+    src=$(pick_source) || break
+    rows=$(fetch_candidates "$src" "$min_w" "$min_h" "$ratio" 2>/dev/null)
+    [[ -n $rows && $rows != "null" ]] || { note_failure; continue; }
+    # Apply the aspect gate only to sources that cannot filter server-side.
+    rows=$(jq -c --argjson w "$min_w" --argjson h "$min_h" \
+      '[.[] | select((.width >= $w and .height >= $h) or .source == "bing" or .source == "picsum")]' <<<"$rows" 2>/dev/null)
+    pick=$(choose_candidate "$rows" 2>/dev/null) || continue
+    [[ -n $pick && $pick != "null" ]] || continue
+    if apply_photo "$pick"; then
+      rc=0
+      break
+    fi
+  done
+
+  ((rc == 0)) || { note_failure; die "no source could provide a wallpaper right now"; }
+  return 0
+}
+
+# Called when the plugin loads. It writes the default config (daily rotation,
+# every source on) and installs a first wallpaper, so the answer to "what do I
+# have to do?" is nothing at all.
+cmd_init() {
+  ensure_config
+  if [[ ! -s $CURRENT_FILE ]] || [[ $(jq -r '.path // ""' "$CURRENT_FILE" 2>/dev/null) == "" ]]; then
+    cmd_next
+    return $?
+  fi
+  return 0
+}
+
+# Re-arms the rotation clock without touching the wallpaper. The service calls
+# this when the interval changes so a switch from off to daily starts counting
+# from now instead of firing on the spot.
+cmd_touch() {
+  ensure_dir "$STATE_DIR"
+  local at
+  at=$(now_ms)
+  if [[ -s $CURRENT_FILE ]]; then
+    jq -c --argjson at "$at" '.appliedAt = $at | .retryAt = 0' "$CURRENT_FILE" >"$CURRENT_FILE.tmp.$$" &&
+      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  else
+    jq -cn --argjson at "$at" '{appliedAt: $at, retryAt: 0}' >"$CURRENT_FILE.tmp.$$" &&
+      mv -f "$CURRENT_FILE.tmp.$$" "$CURRENT_FILE"
+  fi
+}
+
+cmd_status() {
+  ensure_config
+  local lib count src entries="[]" current expose_json
+  lib=$(library_dir)
+  count=0
+  [[ -d $lib ]] && count=$(find "$lib" -maxdepth 1 -type f -name "$FILE_PREFIX*" ! -name "*.source.json" 2>/dev/null | wc -l)
+  count=${count//[^0-9]/}
+  [[ -n $count ]] || count=0
+
+  for src in $SOURCE_IDS; do
+    entries=$(jq -c --arg id "$src" --arg label "$(source_label "$src")" --arg note "$(source_note "$src")" \
+      --argjson on "$(source_enabled "$src" && printf true || printf false)" \
+      '. + [{id: $id, label: $label, note: $note, enabled: $on}]' <<<"$entries")
+  done
+
+  # `cfg` prints the value, so it must be captured before being tested —
+  # `$(cfg expose && echo true)` would concatenate "true\ntrue" and hand jq
+  # two values where it expects one.
+  expose_json=false
+  [[ $(cfg expose) == "true" ]] && expose_json=true
+
+  current='{}'
+  [[ -s $CURRENT_FILE ]] && current=$(cat "$CURRENT_FILE")
+
+  jq -cn --argjson c "$current" --argjson s "$entries" \
+    --argjson rotate "$(cfg rotateMinutes)" --argjson keep "$(cfg keepLast)" \
+    --argjson expose "$expose_json" \
+    --argjson lib "$count" --arg libpath "$lib" '{
+      path: ($c.path // ""),
+      source: ($c.source // ""),
+      id: ($c.id // ""),
+      credit: ($c.credit // ""),
+      link: ($c.link // ""),
+      license: ($c.license // ""),
+      resolution: ($c.resolution // ""),
+      appliedAt: ($c.appliedAt // 0),
+      retryAt: ($c.retryAt // 0),
+      rotateMinutes: $rotate,
+      keepLast: $keep,
+      expose: $expose,
+      library: $lib,
+      libraryPath: $libpath,
+      sources: $s
+    }'
+}
+
+# Trims the library to the newest N images. Never touches the current one.
+cmd_clean() {
+  ensure_config
+  local keep=${1:-}
+  [[ -n $keep ]] || keep=$(cfg keepLast)
+  [[ $keep =~ ^[0-9]+$ ]] || die "usage: fresque clean [keep]"
+  prune_dir "$(library_dir)" "$keep"
+  prune_dir "$(theme_dir)" "$(cfg keepLast)"
+  # The hash index outlives the files it points at, so drop what is gone.
+  if [[ -f $HASH_FILE ]]; then
+    while IFS=$'\t' read -r h p; do [[ -s $p ]] && printf '%s\t%s\n' "$h" "$p"; done <"$HASH_FILE" >"$HASH_FILE.new"
+    mv -f "$HASH_FILE.new" "$HASH_FILE"
+  fi
+  cmd_status | jq -c '{library, libraryPath}'
+}
+
+# One HTTP request per source, so a broken source is visible before it is
+# blamed on the plugin. Used by the CI of the repository, too.
+cmd_verify() {
+  ensure_config
+  local wh min_w min_h ratio src rows n ok=0
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh#* }
+  ratio=$(screen_ratio)
+  for src in $SOURCE_IDS; do
+    rows=$(fetch_candidates "$src" "$min_w" "$min_h" "$ratio" 2>/dev/null)
+    n=$(jq 'length' <<<"${rows:-[]}" 2>/dev/null || echo 0)
+    if [[ ${n:-0} -gt 0 ]] 2>/dev/null; then
+      ok=$((ok + 1))
+      printf '%s\tok\t%s\n' "$src" "$n"
+    else
+      printf '%s\tFAILED\t0\n' "$src"
+    fi
+  done
+  ((ok > 0)) || die "no source responded"
+  return 0
+}
+
+cmd_config() {
+  case "${1:-show}" in
+    show) ensure_config; cat "$CONFIG_FILE" ;;
+    path) printf '%s\n' "$CONFIG_FILE" ;;
+    get)  cfg "${2:?usage: fresque config get <key>}" ;;
+    set)  cfg_set "${2:?usage: fresque config set <key> <value>}" "${3-}" ;;
+    *)    die "unknown config subcommand: $1" ;;
+  esac
+}
+
+usage() {
+  cat <<'USAGE'
+fresque — des fonds d'écran de qualité pour Omarchy
+
+  fresque init              Write the default config and install a first wallpaper
+  fresque next              Fetch and apply the next wallpaper
+  fresque status            Current wallpaper, rotation and sources as JSON
+  fresque verify            Ask every source for one answer (no change on screen)
+  fresque clean [keep]      Trim the library to the newest <keep> images
+  fresque touch             Re-arm the rotation clock without changing the image
+  fresque config show|get|set|path
+  fresque help
+USAGE
+}
+
+case "${1:-help}" in
+  init)   cmd_init ;;
+  next)   shift; cmd_next "$@" ;;
+  status) cmd_status ;;
+  verify) cmd_verify ;;
+  clean)  shift; cmd_clean "$@" ;;
+  touch)  cmd_touch ;;
+  config) shift; cmd_config "$@" ;;
+  help|-h|--help) usage ;;
+  *) die "unknown command: $1 (try: fresque help)" ;;
+esac
