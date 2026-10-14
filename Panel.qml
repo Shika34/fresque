@@ -179,6 +179,20 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
+    // Temporary: read the panel's live state back out of the running shell.
+    function dbg(): string {
+      return JSON.stringify({
+        opened: root.opened,
+        hasBar: root.bar !== null && root.bar !== undefined,
+        hasAnchor: root.anchorItem !== null && root.anchorItem !== undefined,
+        hasHost: root.hostWidget !== null && root.hostWidget !== undefined,
+        rotate: root.rotateMinutes,
+        path: root.current.path,
+        source: root.current.source,
+        enabled: Model.countEnabled(root.enabledSources),
+        ctrl: typeof root.controller
+      })
+    }
   }
 
   KeyboardPanel {
@@ -187,6 +201,7 @@ Panel {
     owner: root.barIdentity
     bar: root.bar
     open: root.opened
+    centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(430))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
