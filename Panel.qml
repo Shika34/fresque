@@ -5,9 +5,11 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// The Fresque popup: what is on screen, how often it changes, and what it is
-// allowed to be. Three rows of choices, and the default state of all of them is
-// already the one people want.
+// The Fresque popup: what is on screen, how often it changes, what it is
+// allowed to be, and what the user has decided to keep.
+//
+// Everything is centred, because the panel is a small piece of furniture on a
+// large screen and a left aligned column of chips reads as a form to fill in.
 Panel {
   id: root
   moduleName: "mitch.fresque"
@@ -27,6 +29,7 @@ Panel {
 
   property var config: ({})
   property var current: ({})
+  property var info: ({})
   property bool working: false
   property string notice: ""
 
@@ -39,13 +42,18 @@ Panel {
   }
   readonly property var themesMap: config.themes ? config.themes : ({})
   readonly property var sourcesMap: config.sources ? config.sources : ({})
+  readonly property bool favoritesOnly: info.favoritesOnly === true || config.favoritesOnly === true
+  readonly property bool isFavorite: info.isFavorite === true
+  readonly property int favoriteCount: Number(info.favorites) || 0
   readonly property string sourceName: Model.sourceLabel(current.source || "")
   readonly property string creditText: Model.singleLine(current.credit || "", 120)
   readonly property string resolutionText: Model.formatSize(current.width, current.height)
   readonly property string dueText: Model.dueLabel(current.appliedAt, current.retryAt, rotateMinutes)
+  readonly property string favoritesLabel: Model.t("favorites") + (favoriteCount > 0 ? " (" + favoriteCount + ")" : "")
 
   function open() {
     root.reload()
+    root.runStatus()
     root.controller.show()
   }
 
@@ -81,6 +89,18 @@ Panel {
     current = Model.parseJson(raw, {}, 262144)
   }
 
+  // `fresque status` reads files only, no network: it is the cheap way to learn
+  // how many favourites exist and whether the one on screen is one of them.
+  function runStatus() {
+    if (statusProcess.running) return
+    statusProcess.command = [root.cliPath, "status"]
+    statusProcess.running = true
+  }
+
+  function applyStatus(raw) {
+    info = Model.parseJson(raw, {}, 262144)
+  }
+
   // Every change goes through the script, so it stays the only owner of the
   // config format and of what counts as a valid value.
   function setInterval(minutes) {
@@ -96,27 +116,37 @@ Panel {
     runConfig("sources." + id, sourcesMap[id] === true ? "false" : "true")
   }
 
+  function toggleFavoritesOnly() {
+    runConfig("favoritesOnly", favoritesOnly ? "false" : "true")
+  }
+
   function runConfig(key, value) {
     configProcess.command = [root.cliPath, "config", "set", key, value]
     configProcess.running = true
   }
 
-  function nextWallpaper() {
+  function runAction(name) {
     if (working) return
     working = true
     notice = Model.t("working") + "..."
-    nextProcess.command = [root.cliPath, "next"]
-    nextProcess.running = true
+    actionProcess.command = [root.cliPath, name]
+    actionProcess.running = true
+  }
+
+  function nextWallpaper() {
+    runAction("next")
   }
 
   // The one gesture that teaches the rotation something: the picture on screen
   // is blocked and replaced, so it never comes back.
   function skipWallpaper() {
-    if (working) return
-    working = true
-    notice = Model.t("working") + "..."
-    skipProcess.command = [root.cliPath, "skip"]
-    skipProcess.running = true
+    runAction("skip")
+  }
+
+  // Favourites are moved, not copied: one file, one place, and the pruning
+  // code never looks in that folder.
+  function toggleFavorite() {
+    runAction(isFavorite ? "unfavorite" : "favorite")
   }
 
   function openSource() {
@@ -159,28 +189,28 @@ Panel {
   Process {
     id: configProcess
     command: []
-    onExited: root.reload()
-  }
-
-  Process {
-    id: nextProcess
-    command: []
-    stdout: StdioCollector { waitForEnd: true }
-    onExited: function(exitCode) {
-      root.working = false
-      root.notice = exitCode === 0 ? "" : Model.t("offline")
+    onExited: {
       root.reload()
+      root.runStatus()
     }
   }
 
   Process {
-    id: skipProcess
+    id: statusProcess
+    command: []
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: root.applyStatus(stdout.text)
+  }
+
+  Process {
+    id: actionProcess
     command: []
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.working = false
-      root.notice = exitCode === 0 ? "" : Model.t("offline")
+      root.notice = exitCode === 0 ? "" : Model.t(root.favoritesOnly ? "noFavorites" : "offline")
       root.reload()
+      root.runStatus()
     }
   }
 
@@ -191,6 +221,7 @@ Panel {
 
     function next(): void { root.nextWallpaper() }
     function skip(): void { root.skipWallpaper() }
+    function favorite(): void { root.toggleFavorite() }
     function open(): void { root.open() }
     function close(): void { root.close() }
     function show(): void { root.open() }
@@ -218,6 +249,7 @@ Panel {
       onTextKey: function(t) {
         if (t === "n" || t === "N") root.nextWallpaper()
         else if (t === "s" || t === "S") root.skipWallpaper()
+        else if (t === "f" || t === "F") root.toggleFavorite()
       }
 
       Column {
@@ -263,8 +295,8 @@ Panel {
           spacing: Style.space(3)
 
           Row {
-            width: parent.width
             spacing: Style.space(8)
+            anchors.horizontalCenter: parent.horizontalCenter
 
             Text {
               text: root.sourceName
@@ -305,6 +337,7 @@ Panel {
             elide: Text.ElideRight
             maximumLineCount: 2
             wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -316,6 +349,7 @@ Panel {
               ? Style.hoverStateColor(root.contentForeground, Color.accent)
               : root.contentForeground
             opacity: root.notice !== "" ? 1 : 0.45
+            horizontalAlignment: Text.AlignHCenter
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -328,15 +362,18 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            width: parent.width
             text: Model.t("schedule")
             color: root.contentForeground
             opacity: 0.55
+            horizontalAlignment: Text.AlignHCenter
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
+            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.INTERVAL_MINUTES
@@ -385,15 +422,18 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            width: parent.width
             text: Model.t("themes")
             color: root.contentForeground
             opacity: 0.55
+            horizontalAlignment: Text.AlignHCenter
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
+            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.THEMES
@@ -442,15 +482,18 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            width: parent.width
             text: Model.t("sources")
             color: root.contentForeground
             opacity: 0.55
+            horizontalAlignment: Text.AlignHCenter
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
+            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.SOURCES
@@ -493,11 +536,64 @@ Panel {
           }
         }
 
-        // ---- The actions. Everything above is a reference; these two are the
+        // ---- Favorites. One switch: either the rotation draws from the whole
+        //      world, or only from what has been kept.
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Text {
+            width: parent.width
+            text: root.favoritesLabel
+            color: root.contentForeground
+            opacity: 0.55
+            horizontalAlignment: Text.AlignHCenter
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            spacing: Style.space(4)
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            Rectangle {
+              width: onlyFavoritesLabel.implicitWidth + Style.space(14)
+              height: Style.space(24)
+              radius: Style.space(4)
+              color: root.favoritesOnly
+                ? Style.hoverFillFor(root.contentForeground, Color.accent)
+                : (onlyFavoritesMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent")
+              border.width: 1
+              border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, root.favoritesOnly ? 0.5 : 0.18)
+
+              Text {
+                id: onlyFavoritesLabel
+                anchors.centerIn: parent
+                text: Model.t("onlyFavorites")
+                color: root.favoritesOnly
+                  ? Style.selectedStateColor(root.contentForeground, Color.accent)
+                  : root.contentForeground
+                opacity: root.favoritesOnly ? 1 : 0.7
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              MouseArea {
+                id: onlyFavoritesMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleFavoritesOnly()
+              }
+            }
+          }
+        }
+
+        // ---- The actions. Everything above is a reference; these four are the
         //      ones that do something.
         Row {
-          width: parent.width
           spacing: Style.space(8)
+          anchors.horizontalCenter: parent.horizontalCenter
 
           Rectangle {
             width: nextLabel.implicitWidth + Style.space(24)
@@ -560,6 +656,38 @@ Panel {
           }
 
           Rectangle {
+            width: favoriteLabel.implicitWidth + Style.space(20)
+            height: Style.space(30)
+            radius: Style.space(5)
+            color: favoriteMouse.containsMouse
+              ? Style.hoverFillFor(root.contentForeground, Color.accent)
+              : "transparent"
+            border.width: 1
+            border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, root.isFavorite ? 0.5 : 0.25)
+
+            Text {
+              id: favoriteLabel
+              anchors.centerIn: parent
+              text: root.isFavorite ? Model.t("unfavorite") : Model.t("favorite")
+              color: root.isFavorite
+                ? Style.selectedStateColor(root.contentForeground, Color.accent)
+                : root.contentForeground
+              opacity: 0.85
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            MouseArea {
+              id: favoriteMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              enabled: !root.working
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toggleFavorite()
+            }
+          }
+
+          Rectangle {
             width: sourceButtonLabel.implicitWidth + Style.space(20)
             height: Style.space(30)
             radius: Style.space(5)
@@ -594,6 +722,7 @@ Panel {
           text: Model.t("closeHint")
           color: root.contentForeground
           opacity: 0.35
+          horizontalAlignment: Text.AlignHCenter
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
         }

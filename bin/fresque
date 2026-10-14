@@ -17,7 +17,7 @@ SEEN_FILE="$STATE_DIR/seen.tsv"
 INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 
-CONFIG_VERSION=3
+CONFIG_VERSION=4
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -79,6 +79,17 @@ library_dir() {
 
 theme_name() { cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "default"; }
 
+# Favourites live in a subfolder of the library, and the pruning code never
+# looks there: a picture the user singled out is the one thing in this plugin
+# that is never deleted.
+favorites_dir() { printf '%s' "$(library_dir)/Favorites"; }
+
+is_favorite_path() {
+  local path=$1 base
+  base=$(basename "$(dirname "$path")")
+  [[ $base == "Favorites" ]]
+}
+
 # The native background picker only cycles files that sit in the theme's own
 # folder, so each applied image is linked there. On one filesystem that link is
 # a hardlink and costs nothing, across two it is a symlink and still costs
@@ -138,16 +149,17 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 3,
+  "version": 4,
   "rotateMinutes": 1440,
   "sources": { "bing": true, "wikimedia": true, "konachan": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
+  "favoritesOnly": false,
   "expose": true,
   "library": ""
 }'
 
-CONFIG_KEYS="rotateMinutes keepLast expose library sources.<id> themes.<id>"
+CONFIG_KEYS="rotateMinutes keepLast expose favoritesOnly library sources.<id> themes.<id>"
 
 ensure_config() {
   if [[ -f $CONFIG_FILE ]]; then
@@ -189,6 +201,9 @@ cfg_set() {
     expose)
       case $value in true|false) ;; *) die "expose must be true or false, got: $value" ;; esac
       tmp=$(jq --argjson v "$value" '.expose = $v' "$CONFIG_FILE") ;;
+    favoritesOnly)
+      case $value in true|false) ;; *) die "favoritesOnly must be true or false, got: $value" ;; esac
+      tmp=$(jq --argjson v "$value" '.favoritesOnly = $v' "$CONFIG_FILE") ;;
     library)
       [[ -z $value || $value == /* ]] || die "library must be an absolute path or empty"
       tmp=$(jq --arg v "$value" '.library = $v' "$CONFIG_FILE") ;;
@@ -503,11 +518,13 @@ list_library() {
     sort -rn | cut -f2-
 }
 
-count_library() {
+count_dir() {
   local dir=$1
   [[ -d $dir ]] || { printf '0'; return 0; }
   find "$dir" -maxdepth 1 -type f -name "$FILE_PREFIX*" 2>/dev/null | wc -l | tr -d ' '
 }
+
+count_library() { count_dir "$1"; }
 
 # Keeps the newest N images, so the folder cannot grow without end. The one on
 # screen is never deleted, and the theme folder is trimmed to the same set.
@@ -688,7 +705,7 @@ apply_photo() {
     # avoid.
     dims=$(image_dimensions "$tmp")
     if [[ -n $dims ]]; then
-      w=${dims% *}; h=${dims#* }
+      w=${dims% *}; h=${dims##* }
       if ((w < min_w || h < min_h)) || ! aspect_ok "$w" "$h"; then
         rm -f "$tmp"
         note_failure
@@ -717,10 +734,18 @@ apply_photo() {
 cmd_next() {
   ensure_config
   local wh min_w min_h attempt src theme rows pick failed=" " rc=1 enabled
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh#* }
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
   enabled=$(enabled_sources)
-  [[ -n $enabled ]] || die "every source is switched off"
   enabled_themes >/dev/null
+
+  # Favourites only: the rotation goes local, and it keeps working with no
+  # network at all.
+  if [[ $(cfg favoritesOnly) == "true" ]]; then
+    cmd_next_favorite && return 0
+    die "no favorite is available yet"
+  fi
+
+  [[ -n $enabled ]] || die "every source is switched off"
   [[ -n $(enabled_themes) ]] || die "every theme is switched off"
 
   for attempt in 1 2 3 4 5 6; do
@@ -737,8 +762,98 @@ cmd_next() {
     failed+="$src "
   done
 
-  ((rc == 0)) || { note_failure; die "no source could provide a wallpaper right now"; }
+  if ((rc != 0)); then
+    # Offline, or every source down. A favorite already on disk is a better
+    # answer than leaving the same picture up and calling it a failure.
+    cmd_next_favorite && return 0
+    note_failure
+    die "no source could provide a wallpaper right now"
+  fi
   return 0
+}
+
+# Serves one of the favorites, at random, skipping the one on screen and
+# anything the user blocked.
+cmd_next_favorite() {
+  local dir current f src id files=() candidates=() n
+  dir=$(favorites_dir)
+  [[ -d $dir ]] || return 1
+  current=$(jq -r '.path // ""' <<<"$(cur_json)")
+  while IFS= read -r f; do
+    files+=("$f")
+  done < <(find "$dir" -maxdepth 1 -type f -name "$FILE_PREFIX*" 2>/dev/null | sort)
+  ((${#files[@]} > 0)) || return 1
+
+  for f in "${files[@]}"; do
+    [[ $f == "$current" ]] && continue
+    src=$(meta_get "$(basename "$f")" 2)
+    id=$(meta_get "$(basename "$f")" 3)
+    [[ -n $src && -n $id ]] && is_blocked "$src" "$id" && continue
+    candidates+=("$f")
+  done
+  ((${#candidates[@]} > 0)) || candidates=("${files[@]}")
+  n=$((RANDOM % ${#candidates[@]}))
+  apply_local "${candidates[$n]}"
+}
+
+# Puts a picture that is already on disk on screen. Credits come from the index
+# when the row is there, so a favorite keeps its author and licence.
+apply_local() {
+  local path=$1 base entry dims
+  [[ -f $path ]] || return 1
+  base=$(basename "$path")
+  entry=$(jq -cn --arg s "$(meta_get "$base" 2)" --arg i "$(meta_get "$base" 3)" \
+    --arg t "$(meta_get "$base" 7)" --arg c "$(meta_get "$base" 4)" \
+    --arg l "$(meta_get "$base" 5)" --arg lic "$(meta_get "$base" 6)" \
+    '{source: $s, id: $i, theme: $t, credit: $c, link: $l, license: $lic, width: 0, height: 0}')
+  dims=$(image_dimensions "$path")
+  if [[ -n $dims ]]; then
+    entry=$(jq -c --argjson w "${dims% *}" --argjson h "${dims##* }" '.width = $w | .height = $h' <<<"$entry")
+  fi
+  set_background "$path"
+  expose_in_theme "$path"
+  write_current "$entry" "$path"
+  printf '%s\n' "$path"
+}
+
+# Moves the picture on screen into the favorites folder. A move rather than a
+# copy: one file, one place, and the credits follow because the index is keyed
+# by file name.
+cmd_favorite() {
+  ensure_config
+  local cur path dir dest
+  cur=$(cur_json)
+  path=$(jq -r '.path // ""' <<<"$cur")
+  [[ -n $path && -f $path ]] || die "nothing is on screen"
+  is_favorite_path "$path" && { printf '%s\n' "$path"; return 0; }
+  dir=$(favorites_dir)
+  ensure_dir "$dir"
+  dest="$dir/$(basename "$path")"
+  mv -f "$path" "$dest" || die "cannot move $path into $dir"
+  [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
+  set_background "$dest"
+  expose_in_theme "$dest"
+  write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$cur")" "$dest"
+  printf '%s\n' "$dest"
+}
+
+# Takes a favorite back into the library, where it becomes prunable again.
+cmd_unfavorite() {
+  ensure_config
+  local cur path dir dest
+  cur=$(cur_json)
+  path=$(jq -r '.path // ""' <<<"$cur")
+  [[ -n $path && -f $path ]] || die "nothing is on screen"
+  is_favorite_path "$path" || { printf '%s\n' "$path"; return 0; }
+  dir=$(library_dir)
+  dest="$dir/$(basename "$path")"
+  mv -f "$path" "$dest" || die "cannot move $path back into $dir"
+  [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
+  set_background "$dest"
+  expose_in_theme "$dest"
+  write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$cur")" "$dest"
+  cmd_prune "$(cfg keepLast)" "$dir"
+  printf '%s\n' "$dest"
 }
 
 # Runs when the plugin loads. It writes the default config and installs a first
@@ -763,9 +878,15 @@ cmd_skip() {
   path=$(jq -r '.path // ""' <<<"$cur")
   [[ -n $src && -n $id ]] && block_item "$src" "$id"
   if [[ -n $path && -f $path ]]; then
-    meta_forget "$(basename "$path")"
-    rm -f "$path"
-    [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
+    if is_favorite_path "$path"; then
+      # A favorite is blocked, never deleted: that is the whole promise of
+      # the favorites folder.
+      :
+    else
+      meta_forget "$(basename "$path")"
+      rm -f "$path"
+      [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
+    fi
   fi
   cmd_next
 }
@@ -787,8 +908,9 @@ cmd_touch() {
 
 cmd_status() {
   ensure_config
-  local src entries="[]" current dir themes_json
+  local src entries="[]" current dir themes_json favdir favcount isfav favonly cur_path
   dir=$(library_dir)
+  favdir=$(favorites_dir)
   for src in $SOURCE_IDS; do
     entries=$(jq -c --arg id "$src" --arg label "$(source_label "$src")" \
       --arg themes "$(source_themes "$src")" \
@@ -799,12 +921,19 @@ cmd_status() {
 
   current=$(cur_json)
   themes_json=$(jq -c '.themes' "$CONFIG_FILE" 2>/dev/null || printf '{}')
+  cur_path=$(jq -r '.path // ""' <<<"$current")
+  favcount=$(count_dir "$favdir")
+  isfav=false
+  [[ -n $cur_path ]] && is_favorite_path "$cur_path" && isfav=true
+  favonly=false
+  [[ $(cfg favoritesOnly) == "true" ]] && favonly=true
 
   jq -cn --argjson c "$current" --argjson s "$entries" \
     --argjson rotate "$(cfg rotateMinutes)" --argjson keep "$(cfg keepLast)" \
     --argjson themes "$themes_json" \
     --argjson lib "$(count_library "$dir")" \
-    --arg libpath "$dir" --arg index "$INDEX_FILE" '{
+    --argjson favorites "$favcount" --argjson isFavorite "$isfav" --argjson favoritesOnly "$favonly" \
+    --arg libpath "$dir" --arg favpath "$favdir" --arg index "$INDEX_FILE" '{
       path: ($c.path // ""),
       source: ($c.source // ""),
       id: ($c.id // ""),
@@ -821,6 +950,10 @@ cmd_status() {
       themes: $themes,
       library: $lib,
       libraryPath: $libpath,
+      favorites: $favorites,
+      favoritesOnly: $favoritesOnly,
+      isFavorite: $isFavorite,
+      favoritesPath: $favpath,
       indexFile: $index,
       sources: $s
     }'
@@ -831,7 +964,7 @@ cmd_status() {
 cmd_verify() {
   ensure_config
   local wh min_w min_h src t n ok=0
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh#* }
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
   for src in $SOURCE_IDS; do
     for t in $(source_themes "$src"); do
       n=$(fetch_candidates "$src" "$t" "$min_w" "$min_h" 2>/dev/null | jq 'length' 2>/dev/null)
@@ -861,7 +994,9 @@ fresque: quality wallpapers for Omarchy
   fresque init                 Write the default config and install a first wallpaper
   fresque next                 Fetch and apply the next wallpaper
   fresque skip                 Block the current wallpaper and serve another one
-  fresque status               Current wallpaper, rotation, themes and sources as JSON
+  fresque favorite             Move the current wallpaper into the favorites folder
+  fresque unfavorite           Move it back into the library
+  fresque status               Current wallpaper, rotation, themes, sources, favorites as JSON
   fresque verify               Ask every source and theme for one answer
   fresque clean [keep]         Trim the library to the newest <keep> images
   fresque touch                Re-arm the rotation clock without changing the picture
@@ -871,17 +1006,19 @@ USAGE
 }
 
 case "${1:-help}" in
-  init)   cmd_init ;;
-  next)   shift; cmd_next "$@" ;;
-  skip)   cmd_skip ;;
-  status) cmd_status ;;
-  verify) cmd_verify ;;
-  clean)  shift; ensure_config
-          cmd_prune "${1:-$(cfg keepLast)}" "$(library_dir)"
-          prune_theme_dir "$(theme_dir)" "$(cfg keepLast)"
-          jq -cn --argjson n "$(count_library "$(library_dir)")" '{library: $n}' ;;
-  touch)  cmd_touch ;;
-  config) shift; cmd_config "$@" ;;
+  init)       cmd_init ;;
+  next)       shift; cmd_next "$@" ;;
+  skip)       cmd_skip ;;
+  favorite)   cmd_favorite ;;
+  unfavorite) cmd_unfavorite ;;
+  status)     cmd_status ;;
+  verify)     cmd_verify ;;
+  clean)      shift; ensure_config
+              cmd_prune "${1:-$(cfg keepLast)}" "$(library_dir)"
+              prune_theme_dir "$(theme_dir)" "$(cfg keepLast)"
+              jq -cn --argjson n "$(count_library "$(library_dir)")" --argjson f "$(count_dir "$(favorites_dir)")" '{library: $n, favorites: $f}' ;;
+  touch)      cmd_touch ;;
+  config)     shift; cmd_config "$@" ;;
   help|-h|--help) usage ;;
   *) die "unknown command: $1 (try: fresque help)" ;;
 esac
