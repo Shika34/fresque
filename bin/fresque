@@ -84,6 +84,14 @@ theme_name() { cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null |
 # that is never deleted.
 favorites_dir() { printf '%s' "$(library_dir)/Favorites"; }
 
+# A picture counts as a favourite when the favourites folder holds its file
+# name, whichever of the two links the shell is currently showing.
+is_current_favorite() {
+  local path=$1
+  [[ -n $path ]] || return 1
+  [[ -e "$(favorites_dir)/$(basename "$path")" ]]
+}
+
 is_favorite_path() {
   local path=$1 base
   base=$(basename "$(dirname "$path")")
@@ -538,7 +546,11 @@ cmd_prune() {
   while (($(count_library "$dir") > keep)); do
     victim=$(list_library "$dir" | grep -v "^$current$" | tail -1)
     [[ -n $victim ]] || break
-    meta_forget "$(basename "$victim")"
+    # A file that is also a favorite keeps its row in the index: the favorite
+    # still needs its credits after the library copy is gone.
+    if [[ ! -e "$(favorites_dir)/$(basename "$victim")" ]]; then
+      meta_forget "$(basename "$victim")"
+    fi
     rm -f "$victim"
   done
   return 0
@@ -816,43 +828,52 @@ apply_local() {
   printf '%s\n' "$path"
 }
 
-# Moves the picture on screen into the favorites folder. A move rather than a
-# copy: one file, one place, and the credits follow because the index is keyed
-# by file name.
+# Adds the picture on screen to the favorites. A hardlink rather than a move:
+# the file the shell is displaying keeps its name so nothing flickers, and the
+# favorite survives the library pruning because it is a second name for the
+# same data. Where linking is not possible it degrades to a copy.
 cmd_favorite() {
   ensure_config
   local cur path dir dest
   cur=$(cur_json)
   path=$(jq -r '.path // ""' <<<"$cur")
   [[ -n $path && -f $path ]] || die "nothing is on screen"
-  is_favorite_path "$path" && { printf '%s\n' "$path"; return 0; }
   dir=$(favorites_dir)
   ensure_dir "$dir"
   dest="$dir/$(basename "$path")"
-  mv -f "$path" "$dest" || die "cannot move $path into $dir"
-  [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
-  set_background "$dest"
-  expose_in_theme "$dest"
-  write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$cur")" "$dest"
+  if [[ ! -e $dest ]]; then
+    ln "$path" "$dest" 2>/dev/null || cp -f "$path" "$dest" || die "cannot add $path to $dir"
+  fi
   printf '%s\n' "$dest"
 }
 
-# Takes a favorite back into the library, where it becomes prunable again.
+# Removes the favorite. The library copy stays where it is, and when the
+# library no longer has it, because it was pruned while favorited, the file
+# moves back instead.
 cmd_unfavorite() {
   ensure_config
   local cur path dir dest
   cur=$(cur_json)
   path=$(jq -r '.path // ""' <<<"$cur")
-  [[ -n $path && -f $path ]] || die "nothing is on screen"
-  is_favorite_path "$path" || { printf '%s\n' "$path"; return 0; }
+  [[ -n $path ]] || die "nothing is on screen"
   dir=$(library_dir)
   dest="$dir/$(basename "$path")"
-  mv -f "$path" "$dest" || die "cannot move $path back into $dir"
-  [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null
-  set_background "$dest"
-  expose_in_theme "$dest"
-  write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$cur")" "$dest"
-  cmd_prune "$(cfg keepLast)" "$dir"
+  if is_favorite_path "$path"; then
+    if [[ -e $dest ]]; then
+      # The library still had its own copy, so removing the favorite link is
+      # all there is to do and nothing on screen moves.
+      rm -f "$path"
+    else
+      mv -f "$path" "$dest" || die "cannot move $path back into $dir"
+      # The displayed file just changed name, so the background link and the
+      # state file follow it. Its timestamp is refreshed so the pruning that
+      # runs next treats it as a new arrival rather than the oldest file.
+      touch "$dest"
+      set_background "$dest"
+      write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$(cur_json)")" "$dest"
+      cmd_prune "$(cfg keepLast)" "$dir"
+    fi
+  fi
   printf '%s\n' "$dest"
 }
 
@@ -924,7 +945,7 @@ cmd_status() {
   cur_path=$(jq -r '.path // ""' <<<"$current")
   favcount=$(count_dir "$favdir")
   isfav=false
-  [[ -n $cur_path ]] && is_favorite_path "$cur_path" && isfav=true
+  is_current_favorite "$cur_path" && isfav=true
   favonly=false
   [[ $(cfg favoritesOnly) == "true" ]] && favonly=true
 
