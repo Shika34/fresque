@@ -2,18 +2,18 @@
   "schemaVersion": 1,
   "id": "mitch.fresque",
   "name": "Fresque",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Mitch",
   "license": "MIT",
-  "description": "Des fonds d'écran de qualité, sans réglage : quatre sources en libre accès, rotation journalière par défaut, bibliothèque locale.",
+  "description": "Quality wallpapers with nothing to configure: four keyless sources, a theme filter, a daily change by default, and a small local library.",
   "homepage": "https://github.com/mitch/fresque",
   "repository": "https://github.com/mitch/fresque",
   "keywords": [
     "wallpaper",
     "background",
-    "wallhaven",
     "photos",
-    "rotation"
+    "rotation",
+    "themes"
   ],
   "kinds": [
     "bar-widget",
@@ -25,7 +25,7 @@
   },
   "barWidget": {
     "displayName": "Fresque",
-    "description": "Fond d'écran du jour, rotation et sources",
+    "description": "Wallpaper of the day, themes and sources",
     "category": "Appearance",
     "allowMultiple": false,
     "defaultSection": "right"

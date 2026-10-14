@@ -7,12 +7,12 @@ import "Model.js" as Model
 
 // Bar entry point.
 //
-// It renders one glyph and owns nothing else: the config file and the state
-// file the CLI writes are its only inputs, so the pill, the panel and the
+// It paints one glyph and owns nothing else: the config file and the state file
+// the script writes are its only inputs, so the pill, the panel and the
 // rotation service never have to talk to each other.
 //
-// Left click opens the panel, right click pulls the next wallpaper — the one
-// gesture people ask for without wanting to open anything.
+// Left click opens the panel, right click takes the next wallpaper, which is
+// the whole feature set most people ever touch.
 BarWidget {
   id: root
   moduleName: "mitch.fresque"
@@ -31,7 +31,7 @@ BarWidget {
   readonly property bool rotating: rotateMinutes > 0
   readonly property string tooltipText: Model.barTooltip({
     source: current.source,
-    resolution: current.resolution,
+    resolution: Model.formatSize(current.width, current.height),
     credit: current.credit,
     appliedAt: current.appliedAt,
     retryAt: current.retryAt,
@@ -53,8 +53,8 @@ BarWidget {
     nextProcess.running = true
   }
 
-  // ---- Panel shape. Bar.findPanelWidget requires open/close/opened on the
-  //      bar-widget root for shell.summon/hide/toggle routing.
+  // Panel shape. Bar.findPanelWidget requires open, close and opened on the
+  // bar widget root for shell.summon, shell.hide and shell.toggle routing.
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
 
   function open() {
@@ -119,9 +119,9 @@ BarWidget {
     }
   }
 
-  // The IPC surface (open/close/toggle/next) lives on the panel, not here:
-  // the panel owns the id's command target the same way omarchy.weather does,
-  // and a handler on the bar widget would only ever be shadowed by it.
+  // The IPC surface lives on the panel, not here: the panel owns the plugin's
+  // command target the same way omarchy.weather does, and a handler on the bar
+  // widget would only ever be shadowed by it.
   Process {
     id: nextProcess
     command: []
@@ -129,7 +129,7 @@ BarWidget {
     onExited: root.working = false
   }
 
-  // A single glyph, so a content-width slot is right: BarIconButton would pin
+  // A single glyph, so a content width slot is right: BarIconButton would pin
   // it to an icon slot and anything longer would overflow its neighbours.
   WidgetButton {
     id: button
