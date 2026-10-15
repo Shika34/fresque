@@ -253,7 +253,7 @@ cfg_set() {
       case $value in true|false) ;; *) die "favoritesOnly must be true or false, got: $value" ;; esac
       tmp=$(jq --argjson v "$value" '.favoritesOnly = $v' "$CONFIG_FILE") ;;
     language)
-      case $value in auto|en|fr) ;; *) die "language must be auto, en or fr, got: $value" ;; esac
+      case $value in auto|en|zh|hi|es|fr|ar|pt|ru|ja|de|it|ko|tr) ;; *) die "language must be auto or one of en zh hi es fr ar pt ru ja de it ko tr, got: $value" ;; esac
       tmp=$(jq --arg v "$value" '.language = $v' "$CONFIG_FILE") ;;
     library)
       [[ -z $value || $value == /* ]] || die "library must be an absolute path or empty"
