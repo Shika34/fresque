@@ -14,7 +14,8 @@ var SOURCES = [
   { id: "noirlab",   label: "NOIRLab",   themes: ["space"] },
   { id: "konachan",  label: "Konachan",  themes: ["anime"] },
   { id: "yandere",   label: "Yande.re",  themes: ["anime"] },
-  { id: "picsum",    label: "Unsplash",  themes: ["photos"] }
+  { id: "picsum",    label: "Unsplash",  themes: ["photos"] },
+  { id: "omarchy",   label: "Omarchy",   themes: ["photos"] }
 ]
 
 var THEMES = [

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.shika34.fresque",
   "name": "Fresque",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "author": "Shika34",
   "license": "MIT",
-  "description": "A pleasure for the eyes, with nothing to configure: six sources without an API key, a theme filter, an instant switch, and a small local library.",
+  "description": "A pleasure for the eyes, with nothing to configure: seven sources without an API key, a theme filter, an instant switch, and a small local library.",
   "homepage": "https://github.com/Shika34/fresque",
   "repository": "https://github.com/Shika34/fresque",
   "keywords": [
@@ -13,7 +13,8 @@
     "background",
     "photos",
     "rotation",
-    "themes"
+    "themes",
+    "omarchy"
   ],
   "kinds": [
     "bar-widget",

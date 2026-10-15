@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=7
+CONFIG_VERSION=8
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -184,9 +184,9 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 7,
+  "version": 8,
   "rotateMinutes": 1440,
-  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "konachan": true, "yandere": true, "picsum": true },
+  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
@@ -307,8 +307,8 @@ CATALOG='{
   "anime":        { "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building", "yandere": "landscape,flowers,city,stars" }
 }'
 
-SOURCE_IDS="bing wikimedia noirlab konachan yandere picsum"
-SOURCE_WEIGHTS="bing=15 wikimedia=30 noirlab=18 konachan=15 yandere=12 picsum=10"
+SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum"
+SOURCE_WEIGHTS="bing=15 wikimedia=30 noirlab=18 omarchy=10 konachan=15 yandere=12 picsum=10"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -317,6 +317,7 @@ source_label() {
     bing)      printf 'Bing' ;;
     wikimedia) printf 'Wikimedia Commons' ;;
     noirlab)   printf 'NOIRLab' ;;
+    omarchy)   printf 'Omarchy' ;;
     konachan)  printf 'Konachan' ;;
     yandere)   printf 'Yande.re' ;;
     picsum)    printf 'Unsplash' ;;
@@ -363,6 +364,7 @@ source_themes() {
     bing)      printf 'photos' ;;
     wikimedia) printf 'nature space architecture animals' ;;
     noirlab)   printf 'space' ;;
+    omarchy)   printf 'photos' ;;
     konachan)  printf 'anime' ;;
     yandere)   printf 'anime' ;;
     picsum)    printf 'photos' ;;
@@ -633,6 +635,40 @@ candidates_noirlab() {
 # Picsum serves Unsplash photographs through its own API with nothing to sign
 # up for. The picture is requested at the screen's own size, so the server does
 # the crop instead of the renderer and nothing is upscaled.
+# The wallpapers that come with Omarchy itself. They are already on the disk,
+# so this source costs no request, no download and no copy: the picture is put
+# on screen where it lies. The directory Fresque writes its own links into is
+# left out, otherwise the source would end up serving its own choices back.
+omarchy_wallpaper_dirs() {
+  local d
+  for d in /usr/share/omarchy/themes/*/backgrounds "$HOME/.config/omarchy/themes"/*/backgrounds; do
+    [[ -d $d ]] && printf '%s\n' "$d"
+  done
+}
+
+candidates_omarchy() {
+  local theme=$1 min_w=$2 min_h=$3 out="[]" dir f label id dims w h
+  while IFS= read -r dir; do
+    label=$(basename "$(dirname "$dir")")
+    while IFS= read -r f; do
+      [[ -f $f ]] || continue
+      dims=$(image_dimensions "$f") || continue
+      w=$(printf '%s' "$dims" | cut -d' ' -f1)
+      h=$(printf '%s' "$dims" | cut -d' ' -f2)
+      [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
+      ((w >= min_w && h >= min_h)) || continue
+      aspect_ok "$w" "$h" || continue
+      id="$(printf '%s' "$label")-$(basename "$f" | sed 's/\.[a-zA-Z]*$//')"
+      out=$(jq -c --arg id "$id" --arg theme "$theme" --arg path "$f" --arg label "$label" \
+        --argjson w "$w" --argjson h "$h" \
+        '. + [{source: "omarchy", id: $id, theme: $theme, local: $path, full: $path, alt: "", thumb: $path,
+               width: $w, height: $h, credit: ("Omarchy, " + $label + " theme"),
+               link: "https://omarchy.org/", license: "Shipped with Omarchy"}]' <<<"$out")
+    done < <(find "$dir" -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
+  done < <(omarchy_wallpaper_dirs)
+  printf '%s' "$out"
+}
+
 candidates_picsum() {
   local min_w=$1 min_h=$2 page
   page=$((RANDOM % 12 + 1))
@@ -661,6 +697,7 @@ fetch_candidates() {
     noirlab)   rows=$(candidates_noirlab "$theme" "$min_w" "$min_h") ;;
     konachan)  rows=$(candidates_konachan "$theme" "$min_w" "$min_h") ;;
     yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
+    omarchy)   rows=$(candidates_omarchy "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
     *)         printf '[]'; return 0 ;;
   esac
@@ -884,6 +921,23 @@ fetch_photo() {
   id=$(jq -r '.id // ""' <<<"$photo")
   src=$(jq -r '.source // ""' <<<"$photo")
   theme=$(jq -r '.theme // ""' <<<"$photo")
+  # A wallpaper that is already on this machine is used where it lies: copying
+  # a 5 MB file to rotate between two folders is waste, and the theme folders
+  # ship with the system.
+  local local_path
+  local_path=$(jq -r '.local // ""' <<<"$photo")
+  if [[ -n $local_path ]]; then
+    [[ -f $local_path ]] || return 1
+    dims=$(image_dimensions "$local_path") || return 1
+    w=$(printf '%s' "$dims" | cut -d' ' -f1); h=$(printf '%s' "$dims" | cut -d' ' -f2)
+    [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || return 1
+    ((w >= min_w && h >= min_h)) && aspect_ok "$w" "$h" || return 1
+    meta_put "$local_path" "$src" "$id" "$(jq -r '.credit // ""' <<<"$photo")" \
+      "$(jq -r '.link // ""' <<<"$photo")" "$(jq -r '.license // ""' <<<"$photo")" "$theme"
+    mark_seen "$src" "$id"
+    printf '%s\n' "$local_path"
+    return 0
+  fi
   full=$(jq -r '.full // ""' <<<"$photo")
   alt=$(jq -r '.alt // ""' <<<"$photo")
   [[ -n $id && -n $full ]] || return 1
@@ -1266,7 +1320,9 @@ cmd_skip() {
       # A favorite is blocked, never deleted: that is the whole promise of
       # the favorites folder.
       :
-    else
+    elif [[ $path == "$(library_dir)"/* ]]; then
+      # Only a picture Fresque downloaded is removed. A wallpaper that belongs
+      # to the system, or to the user, is blocked and left alone.
       meta_forget "$(basename "$path")"
       rm -f "$path"
       [[ $(cfg expose) == "true" ]] && rm -f "$(theme_dir)/$(basename "$path")" 2>/dev/null

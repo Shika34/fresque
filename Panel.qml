@@ -463,7 +463,8 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          Row {
+          Flow {
+            width: parent.width
             spacing: Style.space(4)
 
             Repeater {
@@ -522,7 +523,8 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          Row {
+          Flow {
+            width: parent.width
             spacing: Style.space(4)
 
             Repeater {

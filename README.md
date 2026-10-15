@@ -21,7 +21,7 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Six sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
+| **Seven sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
 | **An instant switch** | Two wallpapers are downloaded ahead of time, so asking for the next one takes about a third of a second instead of a few seconds. One is fetched in the background as soon as you pick one, and the pool never grows past four |
@@ -35,7 +35,7 @@ then takes a new one every day.
 
 ![The Milky Way over Gemini South, a hermit crab in Madagascar, an anime scene from Konachan](docs/wallpapers.jpg)
 
-Three of the six sources, three of the six themes: NOIRLab for Space,
+Three of the seven sources, three of the six themes: NOIRLab for Space,
 Wikimedia Commons for Nature, Konachan for Anime. Each picture keeps its author
 and its licence in the panel.
 
@@ -46,6 +46,7 @@ and its licence in the panel.
 | Bing | The day's photograph, served with the Photos theme. Nothing else is claimed about it, since the picture is chosen by someone else | Bing, credited to its author |
 | Wikimedia Commons | Featured and quality photography, and featured galaxy pictures for Space | Free licence per image, shown in the panel |
 | NOIRLab | The image of the week: the Milky Way over an observatory, a comet, an eclipse, the odd galaxy | NOIRLab/NSF/AURA, CC BY 4.0 |
+| Omarchy | The wallpapers shipped with your Omarchy themes, plus the ones in your own theme folders. Already on the disk, so nothing is downloaded and nothing is copied: the picture is put on screen where it lies, and "Not this one" blocks it without deleting it | Shipped with Omarchy |
 | Konachan, Yande.re | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
 
@@ -54,6 +55,8 @@ screen size, so nothing else can come back from them. The panel dims a source
 whose themes are all switched off, so it is obvious why it stays quiet.
 
 ## Usage
+
+![The panel: preview and credit, interval, theme filter, sources, favorites, actions](docs/panel.jpg)
 
 ![The bar pill, between the tray and the other widgets](docs/bar.jpg)
 
@@ -110,7 +113,8 @@ interface is QML on the Quickshell that Omarchy ships.
 ## What leaves the machine
 
 One HTTPS request to the chosen source when a change is due or when you ask for
-the next wallpaper, then one more for the image itself. No account, no API key,
+the next wallpaper, then one more for the image itself. The Omarchy source asks
+for nothing at all: it reads the wallpapers already installed on the machine. No account, no API key,
 no telemetry, nothing sent anywhere else. Each source is queried through its
 public API and the images are the ones the site already serves to the public.
 
@@ -139,8 +143,8 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 
 ## What it does not do
 
-- No custom sources. The six that ship are the ones that can be used without an
-  API key and without scraping a website.
+- No custom sources. The seven that ship are the ones that can be used without
+  an API key and without scraping a website.
 - No separate wallpaper per screen. Omarchy draws one background across every
   screen, so Fresque picks pictures that fit your largest one instead.
 - No video, no shader, no animated background.
