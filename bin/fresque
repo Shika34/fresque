@@ -203,6 +203,18 @@ ensure_config() {
     version=$(jq -r '.version // 0' "$CONFIG_FILE" 2>/dev/null || echo 0)
     [[ $version == "$CONFIG_VERSION" ]] && return 0
     cp -f "$CONFIG_FILE" "$CONFIG_FILE.bak" 2>/dev/null
+    # A schema change must not throw away the settings someone chose. The
+    # defaults are the base and the old file is merged on top, so a chosen
+    # interval survives, a source that disappeared is dropped, and a source
+    # that is new here shows up with its default.
+    local merged
+    merged=$(jq -c --argjson d "$DEFAULT_CONFIG" \
+      '$d * . | .version = $d.version' "$CONFIG_FILE.bak" 2>/dev/null)
+    if [[ -n $merged ]]; then
+      printf '%s\n' "$merged" >"$CONFIG_FILE" || die "cannot write $CONFIG_FILE"
+      echo "fresque: config migrated from schema v$version to v$CONFIG_VERSION (previous copy at $CONFIG_FILE.bak)" >&2
+      return 0
+    fi
     echo "fresque: config was schema v$version, replaced with v$CONFIG_VERSION" >&2
   fi
   ensure_dir "$(dirname "$CONFIG_FILE")"
