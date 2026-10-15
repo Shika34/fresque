@@ -50,6 +50,27 @@ Panel {
   readonly property string resolutionText: Model.formatSize(current.width, current.height)
   readonly property string dueText: Model.dueLabel(current.appliedAt, current.retryAt, rotateMinutes)
   readonly property string favoritesLabel: Model.t("favorites") + (favoriteCount > 0 ? " (" + favoriteCount + ")" : "")
+  readonly property int sourcesOn: Number(info.sourcesOn) || 0
+  readonly property int themesOn: Number(info.themesOn) || 0
+  readonly property int stagedCount: Number(info.staged) || 0
+  readonly property bool infoLoaded: info.sourcesOn !== undefined
+
+  // One line carries the state of the plugin: a running action, a dead end, or
+  // the countdown. Turning every theme off is not a dead end, it means nothing
+  // is filtered, so it gets a note rather than an alert.
+  readonly property bool noSources: infoLoaded && sourcesOn === 0 && !favoritesOnly
+  readonly property bool noFilter: infoLoaded && themesOn === 0 && sourcesOn > 0
+  readonly property bool statusAlert: notice !== "" || noSources
+  readonly property string statusText: {
+    if (notice !== "") return notice
+    if (noSources) return Model.t("noSources")
+    if (noFilter) return Model.t("noFilter")
+    return dueText
+  }
+  readonly property string footerText: {
+    var hint = Model.t("closeHint")
+    return stagedCount > 0 ? Model.t("ready", { n: stagedCount }) + " · " + hint : hint
+  }
 
   function open() {
     root.reload()
@@ -339,11 +360,11 @@ Panel {
 
           Text {
             width: parent.width
-            text: root.notice !== "" ? root.notice : root.dueText
-            color: root.notice !== ""
+            text: root.statusText
+            color: root.statusAlert
               ? Style.hoverStateColor(root.contentForeground, Color.accent)
               : root.contentForeground
-            opacity: root.notice !== "" ? 1 : 0.45
+            opacity: root.statusAlert ? 1 : 0.45
             horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -609,7 +630,7 @@ Panel {
               id: nextMouse
               anchors.fill: parent
               hoverEnabled: true
-              enabled: !root.working
+              enabled: !root.working && !root.noSources
               cursorShape: Qt.PointingHandCursor
               onClicked: root.nextWallpaper()
             }
@@ -639,7 +660,7 @@ Panel {
               id: skipMouse
               anchors.fill: parent
               hoverEnabled: true
-              enabled: !root.working
+              enabled: !root.working && !root.noSources
               cursorShape: Qt.PointingHandCursor
               onClicked: root.skipWallpaper()
             }
@@ -681,7 +702,7 @@ Panel {
         // ---- One line of reference, then nothing.
         Text {
           width: parent.width
-          text: Model.t("closeHint")
+          text: root.footerText
           color: root.contentForeground
           opacity: 0.35
           horizontalAlignment: Text.AlignLeft

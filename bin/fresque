@@ -16,6 +16,7 @@ CURRENT_FILE="$STATE_DIR/current.json"
 SEEN_FILE="$STATE_DIR/seen.tsv"
 INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
+STAGED_FILE="$STATE_DIR/staged.tsv"
 
 CONFIG_VERSION=5
 FILE_PREFIX="fresque-"
@@ -24,6 +25,9 @@ FILE_PREFIX="fresque-"
 RETRY_MS=300000
 # Ids remembered so a rotation never serves the same picture twice.
 SEEN_KEEP=400
+# How many wallpapers are kept ready on disk. Applying one of those is instant,
+# which is what makes asking for the next wallpaper feel immediate.
+STAGE_MAX=4
 # 64 MiB is far above any wallpaper here and far below anything that could
 # fill the disk if a source misbehaves.
 MAX_IMAGE_BYTES=67108864
@@ -32,6 +36,10 @@ MAX_JSON_BYTES=8388608
 PAGE_SIZE=50
 
 die() { echo "fresque: $*" >&2; exit 1; }
+
+# Path of this script, so it can re-launch itself in the background to prepare
+# the next wallpapers.
+SELF="${BASH_SOURCE[0]}"
 
 # ---------------------------------------------------------------- requests
 
@@ -55,7 +63,26 @@ curl_file() {
 
 urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
 
+# Pixel size of a remote picture, read from its first 64 KB, plus the total size
+# of the file. A JPEG carries its dimensions in the header and the range reply
+# carries the total length, so one cheap request answers both "is it wallpaper
+# shaped" and "is it a reasonable download".
+remote_probe() {
+  local tmp dims total
+  tmp="$STATE_DIR/probe.$$" || return 1
+  total=$(curl --proto '=https' --proto-redir '=https' --silent --show-error --location \
+    --fail --max-time 20 --range 0-65535 --dump-header - --output "$tmp" "$1" 2>/dev/null |
+    awk -F'/' 'tolower($1) ~ /content-range/ { gsub(/[^0-9]/, "", $2); v = $2 } END { print v }')
+  if [[ -s $tmp ]]; then dims=$(image_dimensions "$tmp"); fi
+  rm -f "$tmp"
+  [[ -n $dims ]] || return 1
+  printf '%s %s' "$dims" "${total:-0}"
+}
+
 now_ms() { date +%s%3N; }
+
+# Number of words in a list, used for the counts the panel reads back.
+count_words() { local n=0 w; for w in $1; do n=$((n + 1)); done; printf '%s' "$n"; }
 
 # ---------------------------------------------------------------- files
 
@@ -323,6 +350,15 @@ enabled_sources() {
   printf '%s' "${out% }"
 }
 
+# Filters restrict. With every theme switched off there is no restriction left,
+# so everything is allowed rather than nothing: that is what turning the filters
+# off means, and it removes a dead end where the plugin could only fail.
+filter_active() {
+  local on
+  on=$(enabled_themes)
+  [[ -n $on && $on != "$THEME_IDS" ]]
+}
+
 # A source is usable when it is switched on and at least one of the themes it
 # can serve is on. This is the preference filter, and it runs before any
 # request goes out rather than after a picture is already on screen.
@@ -331,9 +367,11 @@ source_matches_preferences() {
   served=$(source_themes "$src")
   # A source that cannot be filtered is only used when nothing is filtered.
   if [[ $served == "any" ]]; then
-    [[ $(enabled_themes) == "$THEME_IDS" ]]
+    ! filter_active
     return $?
   fi
+  # Nothing filtered: every source is eligible.
+  filter_active || return 0
   for t in $served; do
     theme_enabled "$t" && return 0
   done
@@ -366,9 +404,14 @@ pick_theme_for() {
   local src=$1 t options=() served
   served=$(source_themes "$src")
   [[ $served == "any" ]] && { printf '%s' "any"; return 0; }
-  for t in $served; do
-    theme_enabled "$t" && options+=("$t")
-  done
+  if filter_active; then
+    for t in $served; do
+      theme_enabled "$t" && options+=("$t")
+    done
+  else
+    # Nothing filtered: any theme this source can serve is fair game.
+    for t in $served; do options+=("$t"); done
+  fi
   ((${#options[@]} > 0)) || { printf '%s' "photos"; return 0; }
   printf '%s' "${options[$((RANDOM % ${#options[@]}))]}"
 }
@@ -461,7 +504,7 @@ candidates_wikimedia() {
 # and the minimum size are part of the query rather than a promise, so a request
 # is spent on something that can actually fill the screen.
 candidates_booru() {
-  local host=$1 name=$2 theme=$3 min_w=$4 min_h=$5 tag="" url page limit=60
+  local host=$1 name=$2 theme=$3 min_w=$4 min_h=$5 tag="" url page limit=30
   # A tag most of the time gives scene variety (city, night, water), and no tag
   # the rest of the time opens the whole safe 4K library of the board. Together
   # with a random page this is what keeps a single-filter rotation from serving
@@ -478,8 +521,8 @@ candidates_booru() {
       source: $src,
       id: (.id | tostring),
       theme: $theme,
-      full: .file_url,
-      alt: (.jpeg_url // ""),
+      full: (.jpeg_url // .file_url),
+      alt: (.file_url // ""),
       thumb: (.preview_url // .sample_url),
       width: (.width // 0),
       height: (.height // 0),
@@ -504,7 +547,7 @@ esa_feed_items() {
 }
 
 candidates_esa() {
-  local theme=$1 rows="[]" item url cdn credit page
+  local theme=$1 min_w=$2 min_h=$3 rows="[]" item url cdn credit page full size row kept dims w h
   for spec in "https://esahubble.org/images/feed/ https://cdn.esahubble.org ESA/Hubble https://esahubble.org" \
               "https://esawebb.org/images/feed/ https://cdn.esawebb.org ESA/Webb https://esawebb.org"; do
     set -- $spec
@@ -526,7 +569,29 @@ candidates_esa() {
         link: ($page + "/images/" + .[0] + "/"),
         license: "ESA/Hubble and NASA, CC BY 4.0"
       })' 2>/dev/null)
-    [[ -n $item && $item != "null" ]] && rows=$(jq -c --argjson b "$item" '. + $b' <<<"$rows")
+    [[ -n $item && $item != "null" ]] || continue
+    # Telescope pictures are not all wallpaper shaped, and the feed says nothing
+    # about their size. Measuring the header of each candidate costs 64 KB and
+    # settles both questions, so nothing big is downloaded only to be refused.
+    kept="[]"
+    for row in $(jq -r '.[] | @base64' <<<"$item" | shuf -n 6); do
+      row=$(printf '%s' "$row" | base64 -d 2>/dev/null)
+      [[ -n $row ]] || continue
+      full=$(jq -r '.full' <<<"$row")
+      dims=$(remote_probe "$full") || continue
+      w=$(printf '%s' "$dims" | cut -d' ' -f1)
+      h=$(printf '%s' "$dims" | cut -d' ' -f2)
+      size=$(printf '%s' "$dims" | cut -d' ' -f3)
+      [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
+      ((w >= min_w && h >= min_h)) || continue
+      aspect_ok "$w" "$h" || continue
+      # A telescope mosaic can be 30 MB and there is no point downloading one
+      # wallpaper rotation.
+      [[ $size =~ ^[0-9]+$ ]] && ((size > 8000000)) && continue
+      row=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$row")
+      kept=$(jq -c --argjson r "$row" '. + [$r]' <<<"$kept")
+    done
+    [[ -n $kept && $kept != "null" ]] && rows=$(jq -c --argjson b "$kept" '. + $b' <<<"$rows")
   done
   printf '%s' "$rows"
 }
@@ -558,7 +623,7 @@ fetch_candidates() {
   case $src in
     bing)      rows=$(candidates_bing) ;;
     wikimedia) rows=$(candidates_wikimedia "$theme" "$min_w" "$min_h") ;;
-    esa)       rows=$(candidates_esa "$theme") ;;
+    esa)       rows=$(candidates_esa "$theme" "$min_w" "$min_h") ;;
     konachan)  rows=$(candidates_konachan "$theme" "$min_w" "$min_h") ;;
     yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
@@ -641,8 +706,12 @@ cmd_prune() {
   current=$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null)
 
   while (($(count_library "$dir") > keep)); do
-    victim=$(list_library "$dir" | grep -v "^$current$" | tail -1)
+    victim=$(list_library "$dir" | grep -v "^$current$" | grep -vFf "$STAGED_FILE" 2>/dev/null | tail -1)
+    [[ -n $victim ]] || victim=$(list_library "$dir" | grep -v "^$current$" | tail -1)
     [[ -n $victim ]] || break
+    # A file waiting in the staged pool is never pruned: it is about to be
+    # shown, and the next rotation would have to download it again.
+    is_staged "$victim" && break
     # A file that is also a favorite keeps its row in the index: the favorite
     # still needs its credits after the library copy is gone.
     if [[ ! -e "$(favorites_dir)/$(basename "$victim")" ]]; then
@@ -771,12 +840,12 @@ note_failure() {
   fi
 }
 
-# Downloads, checks and installs one candidate. Returns non-zero without
-# touching the screen when the file is not usable, so the caller can try
-# another source.
-apply_photo() {
+# Downloads one candidate into the library and prints its path. Every gate runs
+# here, so whatever comes back is a usable wallpaper. Nothing is put on screen,
+# which is what allows the next one to be fetched in advance.
+fetch_photo() {
   local photo=$1 min_w=$2 min_h=$3
-  local id src theme slug full alt ext dir dest tmp dims w h
+  local id src theme slug full alt ext dir dest tmp dims w h url
   id=$(jq -r '.id // ""' <<<"$photo")
   src=$(jq -r '.source // ""' <<<"$photo")
   theme=$(jq -r '.theme // ""' <<<"$photo")
@@ -795,67 +864,135 @@ apply_photo() {
   dest="$dir/$FILE_PREFIX$src-$slug.$ext"
 
   if [[ ! -s $dest ]]; then
-    tmp=$(mktemp "$dir/.$FILE_PREFIX$src-$slug.XXXXXX") || return 1
-    if ! curl_file "$full" "$tmp"; then
-      rm -f "$tmp"
-      if [[ -n $alt ]]; then
-        tmp=$(mktemp "$dir/.$FILE_PREFIX$src-$slug.XXXXXX") || return 1
-        curl_file "$alt" "$tmp" || { rm -f "$tmp"; note_failure; return 1; }
-      else
-        note_failure
-        return 1
-      fi
-    fi
-    if ! verify_image "$tmp"; then
-      rm -f "$tmp"; note_failure; return 1
-    fi
-    # Measured, not trusted: a source may promise 4K and deliver 1024 pixels,
-    # and a wallpaper smaller than the screen is what this plugin exists to
-    # avoid.
-    dims=$(image_dimensions "$tmp")
-    if [[ -n $dims ]]; then
-      w=${dims% *}; h=${dims##* }
-      if ((w < min_w || h < min_h)) || ! aspect_ok "$w" "$h"; then
+    for url in "$full" "$alt"; do
+      [[ -n $url ]] || continue
+      case $url in https://*) ;; *) continue ;; esac
+      tmp=$(mktemp "$dir/.$FILE_PREFIX$src-$slug.XXXXXX") || return 1
+      if ! curl_file "$url" "$tmp" || ! verify_image "$tmp"; then
         rm -f "$tmp"
-        note_failure
-        return 1
+        continue
       fi
-      photo=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$photo")
-    fi
-    mv -f "$tmp" "$dest"
-    chmod 644 "$dest"
+      # Measured, not trusted: a source may promise 4K and deliver 1024 pixels,
+      # and a wallpaper smaller than the screen is what this plugin exists to
+      # avoid. The second URL of a candidate is often the untouched original,
+      # bigger than the re-encoded one, so a candidate refused on size is
+      # retried instead of thrown away.
+      dims=$(image_dimensions "$tmp")
+      if [[ -n $dims ]]; then
+        w=${dims% *}; h=${dims##* }
+        if ((w < min_w || h < min_h)) || ! aspect_ok "$w" "$h"; then
+          rm -f "$tmp"
+          continue
+        fi
+        photo=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$photo")
+      fi
+      ext=$(image_ext "$url")
+      dest="$dir/$FILE_PREFIX$src-$slug.$ext"
+      mv -f "$tmp" "$dest"
+      chmod 644 "$dest"
+      break
+    done
+    [[ -s $dest ]] || { note_failure; return 1; }
   fi
 
-  set_background "$dest"
-  expose_in_theme "$dest"
-  write_current "$photo" "$dest"
   meta_put "$dest" "$src" "$id" "$(jq -r '.credit // ""' <<<"$photo")" \
     "$(jq -r '.link // ""' <<<"$photo")" "$(jq -r '.license // ""' <<<"$photo")" "$theme"
   mark_seen "$src" "$id"
   cmd_prune "$(cfg keepLast)" "$dir"
-  prune_theme_dir "$(theme_dir)" "$(cfg keepLast)"
   printf '%s\n' "$dest"
   return 0
 }
 
-# ---------------------------------------------------------------- commands
+# Installs a candidate on screen: fetch it if it is not already on disk, then
+# set it, expose it to the theme folder and record it as the current wallpaper.
+apply_photo() {
+  local photo=$1 min_w=$2 min_h=$3 path
+  path=$(fetch_photo "$photo" "$min_w" "$min_h") || return 1
+  [[ -n $path && -f $path ]] || return 1
+  set_background "$path"
+  expose_in_theme "$path"
+  write_current "$photo" "$path"
+  prune_theme_dir "$(theme_dir)" "$(cfg keepLast)"
+  printf '%s\n' "$path"
+  return 0
+}
+
+# The staged pool: a few wallpapers downloaded ahead of time. Applying one of
+# them needs no network at all, which is what makes asking for the next
+# wallpaper feel immediate.
+stage_list() { [[ -f $STAGED_FILE ]] && cat "$STAGED_FILE" || true; }
+
+stage_count() {
+  local n=0 f
+  while IFS= read -r f; do [[ -n $f && -f $f ]] && n=$((n + 1)); done < <(stage_list)
+  printf '%s' "$n"
+}
+
+stage_add() {
+  local path=$1
+  [[ -n $path && -f $path ]] || return 1
+  ensure_dir "$STATE_DIR"
+  if [[ -f $STAGED_FILE ]] && grep -qxF "$path" "$STAGED_FILE"; then return 0; fi
+  printf '%s\n' "$path" >>"$STAGED_FILE"
+  return 0
+}
+
+# Takes one ready file out of the pool and rewrites the list without it.
+stage_pop() {
+  local f found=""
+  [[ -f $STAGED_FILE ]] || return 1
+  while IFS= read -r f; do
+    [[ -n $f && -f $f ]] || continue
+    if [[ -z $found ]]; then
+      found=$f
+      continue
+    fi
+    printf '%s\n' "$f"
+  done < <(cat "$STAGED_FILE") >"$STAGED_FILE.new"
+  mv -f "$STAGED_FILE.new" "$STAGED_FILE" 2>/dev/null
+  [[ -n $found ]] || return 1
+  printf '%s' "$found"
+  return 0
+}
+
+is_staged() {
+  [[ -f $STAGED_FILE ]] && grep -qxF "$1" "$STAGED_FILE"
+}
+
+# Refills the pool in the background. Detached on purpose: the click that
+# triggered it must not wait for the download.
+stage_refill() {
+  local want=${1:-2}
+  [[ $(cfg favoritesOnly) == "true" ]] && return 0
+  [[ -n $(enabled_sources) ]] || return 0
+  ensure_dir "$STATE_DIR"
+  setsid "$SELF" prefetch "$want" </dev/null >/dev/null 2>&1 &
+  return 0
+}
 
 cmd_next() {
   ensure_config
-  local wh min_w min_h attempt src theme rows pick failed=" " rc=1 enabled
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
-  enabled=$(enabled_sources)
-  enabled_themes >/dev/null
+  local wh min_w min_h attempt src theme rows pick failed=" " rc=1 enabled staged
 
-  # Favourites only: the rotation goes local, and it keeps working with no
+  # Favorites only: the rotation goes local, and it keeps working with no
   # network at all.
   if [[ $(cfg favoritesOnly) == "true" ]]; then
     cmd_next_favorite && return 0
     die "no favorite is available yet"
   fi
 
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
+
+  # A wallpaper fetched in advance is already on disk, so putting it on screen
+  # costs nothing. The pool is refilled behind the scenes afterwards.
+  staged=$(stage_pop)
+  if [[ -n $staged ]] && apply_local "$staged"; then
+    stage_refill 2
+    return 0
+  fi
+
+  enabled=$(enabled_sources)
   [[ -n $enabled ]] || die "every source is switched off"
-  [[ -n $(enabled_themes) ]] || die "every theme is switched off"
 
   for attempt in 1 2 3 4 5 6; do
     src=$(pick_source) || break
@@ -878,6 +1015,40 @@ cmd_next() {
     note_failure
     die "no source could provide a wallpaper right now"
   fi
+  # Prepare the next one while this one is on screen.
+  stage_refill 2
+  return 0
+}
+
+# Downloads a few wallpapers in advance, so asking for the next one is instant.
+# Guarded by a lock: several triggers, from the panel, the service and the bar
+# pill, never pile up on the same source.
+cmd_prefetch() {
+  ensure_config
+  local want=${1:-2} wh min_w min_h src theme rows pick path count attempts=0
+  ensure_dir "$STATE_DIR"
+  exec 9>"$STATE_DIR/prefetch.lock" 2>/dev/null || return 0
+  flock -n 9 || return 0
+
+  count=$(stage_count)
+  want=$((count + want))
+  ((want > STAGE_MAX)) && want=$STAGE_MAX
+  ((count < want)) || return 0
+  [[ $(cfg favoritesOnly) == "true" ]] && return 0
+  [[ -n $(enabled_sources) ]] || return 0
+
+  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
+  while (($(stage_count) < want)) && ((attempts < 4)); do
+    attempts=$((attempts + 1))
+    src=$(pick_source) || break
+    theme=$(pick_theme_for "$src")
+    rows=$(fetch_candidates "$src" "$theme" "$min_w" "$min_h" 2>/dev/null)
+    [[ -n $rows && $rows != "null" ]] || continue
+    pick=$(choose_candidate "$rows" 2>/dev/null) || continue
+    [[ -n $pick && $pick != "null" ]] || continue
+    path=$(fetch_photo "$pick" "$min_w" "$min_h" 2>/dev/null) || continue
+    stage_add "$path"
+  done
   return 0
 }
 
@@ -1051,6 +1222,9 @@ cmd_status() {
     --argjson themes "$themes_json" \
     --argjson lib "$(count_library "$dir")" \
     --argjson favorites "$favcount" --argjson isFavorite "$isfav" --argjson favoritesOnly "$favonly" \
+    --argjson staged "$(stage_count)" \
+    --argjson sourcesOn "$(count_words "$(enabled_sources)")" \
+    --argjson themesOn "$(count_words "$(enabled_themes)")" \
     --arg libpath "$dir" --arg favpath "$favdir" --arg index "$INDEX_FILE" '{
       path: ($c.path // ""),
       source: ($c.source // ""),
@@ -1071,6 +1245,9 @@ cmd_status() {
       favorites: $favorites,
       favoritesOnly: $favoritesOnly,
       isFavorite: $isFavorite,
+      staged: $staged,
+      sourcesOn: $sourcesOn,
+      themesOn: $themesOn,
       favoritesPath: $favpath,
       indexFile: $index,
       sources: $s
@@ -1110,7 +1287,8 @@ usage() {
 fresque: quality wallpapers for Omarchy
 
   fresque init                 Write the default config and install a first wallpaper
-  fresque next                 Fetch and apply the next wallpaper
+  fresque next                 Apply the next wallpaper (instant when one is ready)
+  fresque prefetch [n]         Download the next <n> wallpapers in advance
   fresque skip                 Block the current wallpaper and serve another one
   fresque favorite             Move the current wallpaper into the favorites folder
   fresque unfavorite           Move it back into the library
@@ -1126,6 +1304,7 @@ USAGE
 case "${1:-help}" in
   init)       cmd_init ;;
   next)       shift; cmd_next "$@" ;;
+  prefetch)   shift; cmd_prefetch "$@" ;;
   skip)       cmd_skip ;;
   favorite)   cmd_favorite ;;
   unfavorite) cmd_unfavorite ;;
