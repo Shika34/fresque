@@ -102,9 +102,18 @@ Panel {
     currentView.reload()
   }
 
+  // The language a panel was built with is fixed for the life of that panel,
+  // so a change asks the bar widget to rebuild it.
+  property string renderedLanguage: Model.localeKey()
+
   function applyConfig(raw) {
     config = Model.parseJson(raw, {}, 65536)
     Model.setLanguage(config.language || "auto")
+    if (Model.localeKey() !== renderedLanguage) {
+      renderedLanguage = Model.localeKey()
+      if (root.hostWidget && typeof root.hostWidget.reloadPanel === "function")
+        Qt.callLater(root.hostWidget.reloadPanel)
+    }
   }
 
   function applyCurrent(raw) {

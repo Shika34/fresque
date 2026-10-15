@@ -249,6 +249,7 @@ function dueLabel(appliedAt, retryAt, minutes, includePrefix) {
 }
 
 function barTooltip(state) {
+  if (state && state.lang) setLanguage(state.lang)
   var lines = []
   lines.push(state && state.source
     ? "Fresque, " + sourceLabel(state.source) + (state.resolution ? ", " + state.resolution : "")

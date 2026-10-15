@@ -29,7 +29,9 @@ BarWidget {
     return isFinite(m) && m > 0 ? Math.round(m) : 0
   }
   readonly property bool rotating: rotateMinutes > 0
+  property string langStamp: Model.localeKey()
   readonly property string tooltipText: Model.barTooltip({
+    lang: langStamp,
     source: current.source,
     resolution: Model.formatSize(current.width, current.height),
     credit: current.credit,
@@ -74,6 +76,19 @@ BarWidget {
 
   function closeForPopoutSwitch() {
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
+  }
+
+  // Rebuilding the panel is how a language change takes effect: every label is
+  // a binding evaluated once at creation, so a panel built before the settings
+  // were read would keep the previous language for the rest of the session.
+  function reloadPanel() {
+    var wasOpen = root.opened
+    panelLoader.active = false
+    panelLoader.active = true
+    Qt.callLater(function() {
+      root.injectPanel()
+      if (wasOpen) root.open()
+    })
   }
 
   function injectPanel() {
