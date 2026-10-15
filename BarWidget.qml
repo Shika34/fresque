@@ -15,7 +15,7 @@ import "Model.js" as Model
 // the whole feature set most people ever touch.
 BarWidget {
   id: root
-  moduleName: "mitch.fresque"
+  moduleName: "io.github.shika34.fresque"
 
   readonly property string cliPath: Qt.resolvedUrl("bin/fresque").toString().replace(/^file:\/\//, "")
   readonly property string home: Quickshell.env("HOME")

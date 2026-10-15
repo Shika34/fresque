@@ -12,8 +12,8 @@ import "Model.js" as Model
 // large screen and a left aligned column of chips reads as a form to fill in.
 Panel {
   id: root
-  moduleName: "mitch.fresque"
-  ipcTarget: "mitch.fresque"
+  moduleName: "io.github.shika34.fresque"
+  ipcTarget: "io.github.shika34.fresque"
   manageIpc: false
 
   readonly property string cliPath: Qt.resolvedUrl("bin/fresque").toString().replace(/^file:\/\//, "")
@@ -237,7 +237,7 @@ Panel {
     }
   }
 
-  // The panel owns the command target: `omarchy-shell mitch.fresque next`
+  // The panel owns the command target: `omarchy-shell io.github.shika34.fresque next`
   // lands here even though the bar pill is what people click.
   IpcHandler {
     target: root.ipcTarget

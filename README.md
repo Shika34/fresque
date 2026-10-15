@@ -96,7 +96,7 @@ fresque config set themes.space false   # turn a theme off (nature space archite
 fresque config set sources.esa false    # turn a source off (bing wikimedia esa konachan yandere picsum)
 ```
 
-The script lives at `~/.config/omarchy/plugins/mitch.fresque/bin/fresque`.
+The script lives at `~/.config/omarchy/plugins/io.github.shika34.fresque/bin/fresque`.
 
 ## What leaves the machine
 
@@ -118,7 +118,7 @@ public API and the images are the ones the site already serves to the public.
 ## Uninstall
 
 ```sh
-omarchy plugin remove mitch.fresque
+omarchy plugin remove io.github.shika34.fresque
 ```
 
 The library and the settings are left in place. Remove them as well if you want
@@ -140,10 +140,10 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 
 ```sh
 git clone https://github.com/Shika34/fresque.git \
-  ~/.config/omarchy/plugins/mitch.fresque
-omarchy plugin validate ~/.config/omarchy/plugins/mitch.fresque
+  ~/.config/omarchy/plugins/io.github.shika34.fresque
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.shika34.fresque
 omarchy-shell shell rescanPlugins
-omarchy plugin enable mitch.fresque
+omarchy plugin enable io.github.shika34.fresque
 ```
 
 Any `.qml` edit needs `omarchy-restart-shell`. `rescanPlugins` only discovers
