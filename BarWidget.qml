@@ -130,19 +130,17 @@ BarWidget {
   }
 
   // One glyph carries the plugin's identity, a wallpaper, and the bar's own
-  // vocabulary carries the state: the tint marks a live rotation and the
-  // dimmed state marks a transfer in progress. Swapping the mark for a cog
-  // whenever the plugin was merely working made it look like a settings
-  // widget.
+  // vocabulary carries the state: dimmed while a picture is being fetched, and
+  // dimmed when the rotation is paused. The colour is left alone, so the mark
+  // is the same colour as every other icon in the bar, which is what keeps it
+  // readable over a light wallpaper. Tinting it with the theme accent, however
+  // pretty on a dark desktop, made it vanish on a pale one.
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     text: "󰋩" // nf-md-wallpaper
-    foreground: root.rotating
-      ? Color.accent
-      : (root.bar ? root.bar.barForeground : Color.foreground)
-    dimmed: root.working
+    dimmed: root.working || !root.rotating
     tooltipText: root.tooltipText
     horizontalMargin: 8.75
     verticalPadding: 8.75
