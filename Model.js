@@ -4,13 +4,16 @@
 // bin/fresque on purpose: the bar pill has to render before any process has
 // run, and the ids are the contract between the script and the interface.
 
-// `themes` is what a source can actually serve. Bing is the day's picture and
-// Unsplash via Picsum is untagged, so both ignore the theme filter; the panel
-// says so instead of pretending otherwise.
+// `themes` is what a source can actually serve. `any` means the source cannot
+// be filtered at all: Bing is one picture chosen by someone else each day, so
+// it is only used when no theme filter is set, rather than being allowed to
+// slip a landscape into a request for animals or space.
 var SOURCES = [
-  { id: "bing",      label: "Bing",      themes: ["nature", "space", "architecture", "animals", "photos"] },
+  { id: "bing",      label: "Bing",      themes: ["any"] },
   { id: "wikimedia", label: "Wikimedia", themes: ["nature", "space", "architecture", "animals"] },
+  { id: "esa",       label: "ESA/Hubble", themes: ["space"] },
   { id: "konachan",  label: "Konachan",  themes: ["anime"] },
+  { id: "yandere",   label: "Yande.re",  themes: ["anime"] },
   { id: "picsum",    label: "Unsplash",  themes: ["photos"] }
 ]
 
@@ -187,11 +190,14 @@ function countOn(map) {
 }
 
 // True when at least one theme this source can serve is switched on, which is
-// the same rule bin/fresque applies before it asks a source for anything.
+// the same rule bin/fresque applies before it asks a source for anything. A
+// source marked `any` cannot be filtered, so it only counts when every theme is
+// on, that is, when nothing is filtered at all.
 function sourceMatches(sourceId, themesMap) {
   for (var i = 0; i < SOURCES.length; i++) {
     if (SOURCES[i].id !== sourceId) continue
     var served = SOURCES[i].themes
+    if (served.length === 1 && served[0] === "any") return countOn(themesMap) === THEMES.length
     for (var j = 0; j < served.length; j++)
       if (themesMap && themesMap[served[j]] === true) return true
     return false

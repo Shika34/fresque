@@ -17,7 +17,7 @@ SEEN_FILE="$STATE_DIR/seen.tsv"
 INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 
-CONFIG_VERSION=4
+CONFIG_VERSION=5
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -157,9 +157,9 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 4,
+  "version": 5,
   "rotateMinutes": 1440,
-  "sources": { "bing": true, "wikimedia": true, "konachan": true, "picsum": true },
+  "sources": { "bing": true, "wikimedia": true, "esa": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
@@ -241,16 +241,16 @@ is_theme() { [[ " $THEME_IDS " == *" $1 "* ]]; }
 # curated sets, and the Konachan tags are the ones that reliably hold 4K
 # pictures rather than small illustrations.
 CATALOG='{
-  "nature":       { "wikimedia": "Featured_pictures_of_nature,Featured_pictures_of_landscapes,Quality_images_of_landscapes", "konachan": "" },
-  "space":        { "wikimedia": "Featured_pictures_of_astronomy,Quality_images_of_astronomy", "konachan": "" },
-  "architecture": { "wikimedia": "Featured_pictures_of_architecture,Quality_images_of_architecture", "konachan": "" },
-  "animals":      { "wikimedia": "Quality_images_of_birds,Quality_images_of_insects", "konachan": "" },
-  "photos":       { "wikimedia": "", "konachan": "" },
-  "anime":        { "wikimedia": "", "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building" }
+  "nature":       { "wikimedia": "Featured_pictures_of_nature,Featured_pictures_of_landscapes,Quality_images_of_landscapes,Featured_pictures_of_plants,Quality_images_of_waterfalls" },
+  "space":        { "wikimedia": "Featured_pictures_of_galaxies" },
+  "architecture": { "wikimedia": "Featured_pictures_of_architecture,Quality_images_of_architecture" },
+  "animals":      { "wikimedia": "Quality_images_of_birds,Quality_images_of_crustaceans,Quality_images_of_reptiles" },
+  "photos":       { "wikimedia": "" },
+  "anime":        { "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building", "yandere": "landscape,flowers,city,stars" }
 }'
 
-SOURCE_IDS="bing wikimedia konachan picsum"
-SOURCE_WEIGHTS="bing=20 wikimedia=45 konachan=20 picsum=15"
+SOURCE_IDS="bing wikimedia esa konachan yandere picsum"
+SOURCE_WEIGHTS="bing=15 wikimedia=30 esa=18 konachan=15 yandere=12 picsum=10"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -258,7 +258,9 @@ source_label() {
   case $1 in
     bing)      printf 'Bing' ;;
     wikimedia) printf 'Wikimedia Commons' ;;
+    esa)       printf 'ESA/Hubble' ;;
     konachan)  printf 'Konachan' ;;
+    yandere)   printf 'Yande.re' ;;
     picsum)    printf 'Unsplash' ;;
   esac
 }
@@ -279,14 +281,32 @@ theme_enabled() {
 
 catalog_get() { jq -r --arg t "$1" --arg s "$2" '.[$t][$s] // ""' <<<"$CATALOG" 2>/dev/null; }
 
-# Which themes a source can serve. Bing is the day's picture and Picsum serves
-# nothing but Picsum, so neither can be filtered by theme; the panel says so
-# next to the source instead of hiding it.
+# Community "quality" categories are curated by eye, and they still contain the
+# occasional museum specimen, mural, map or diagram. One keyword list per theme
+# removes the obvious non-photographs before anything is downloaded, which is
+# cheaper than discovering them on the screen.
+THEME_BLOCK='{
+  "animals":      "museum fossil taxiderm specimen statue sculpture diorama mural illustration drawing painting sketch engraving",
+  "space":        "illustration diagram drawing chart map graph",
+  "architecture": "diagram plan map drawing painting sketch engraving illustration",
+  "nature":       "diagram map chart graph illustration drawing sketch painting",
+  "anime":        "",
+  "photos":       ""
+}'
+
+theme_block() { jq -r --arg t "$1" '.[$t] // ""' <<<"$THEME_BLOCK" 2>/dev/null; }
+
+# Which themes a source can serve. `any` marks a source that cannot be filtered
+# at all: Bing is one picture chosen for the day by someone else, so it is only
+# used when no theme filter is set, rather than being allowed to slip a
+# landscape into a request for animals or space.
 source_themes() {
   case $1 in
-    bing)      printf 'nature space architecture animals photos' ;;
+    bing)      printf 'any' ;;
     wikimedia) printf 'nature space architecture animals' ;;
+    esa)       printf 'space' ;;
     konachan)  printf 'anime' ;;
+    yandere)   printf 'anime' ;;
     picsum)    printf 'photos' ;;
   esac
 }
@@ -307,8 +327,14 @@ enabled_sources() {
 # can serve is on. This is the preference filter, and it runs before any
 # request goes out rather than after a picture is already on screen.
 source_matches_preferences() {
-  local src=$1 t
-  for t in $(source_themes "$src"); do
+  local src=$1 t served
+  served=$(source_themes "$src")
+  # A source that cannot be filtered is only used when nothing is filtered.
+  if [[ $served == "any" ]]; then
+    [[ $(enabled_themes) == "$THEME_IDS" ]]
+    return $?
+  fi
+  for t in $served; do
     theme_enabled "$t" && return 0
   done
   return 1
@@ -337,8 +363,10 @@ pick_source() {
 # One theme the chosen source can serve, picked at random among the enabled
 # ones, so a rotation with several themes on does not always query the same one.
 pick_theme_for() {
-  local src=$1 t options=()
-  for t in $(source_themes "$src"); do
+  local src=$1 t options=() served
+  served=$(source_themes "$src")
+  [[ $served == "any" ]] && { printf '%s' "any"; return 0; }
+  for t in $served; do
     theme_enabled "$t" && options+=("$t")
   done
   ((${#options[@]} > 0)) || { printf '%s' "photos"; return 0; }
@@ -397,39 +425,57 @@ candidates_bing() {
 # 3840px thumbnail is fetched rather than the original, because originals are
 # sometimes 60 MB TIFFs and this is a wallpaper, not an archive.
 candidates_wikimedia() {
-  local theme=$1 min_w=$2 min_h=$3 category scaled=3840
+  local theme=$1 min_w=$2 min_h=$3 scaled=3840 pool cats cat page rows="[]"
   ((min_w > scaled)) && scaled=$min_w
-  category=$(catalog_get "$theme" wikimedia | tr ',' '\n' | grep -v '^$' | shuf -n 1)
-  [[ -n $category ]] || { printf '[]'; return 0; }
-  curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:$(urlencode "$category")&gcmtype=file&gcmlimit=$PAGE_SIZE&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=$scaled" |
-    jq -c --argjson minw "$min_w" --argjson minh "$min_h" --arg theme "$theme" \
-      '[.query.pages[]? | (.imageinfo[0] // {}) as $ii | {
-        source: "wikimedia",
-        id: ((.title // "") | sub("^File:"; "")),
-        theme: $theme,
-        full: ($ii.thumburl // $ii.url),
-        alt: ($ii.url // ""),
-        thumb: ($ii.thumburl // $ii.url),
-        width: ($ii.width // 0),
-        height: ($ii.height // 0),
-        credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
-        link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
-        license: ($ii.extmetadata.LicenseShortName.value // "Free license")
-      } | select(.width >= $minw and .height >= $minh)]'
+  pool=$(catalog_get "$theme" wikimedia | tr ',' '\n' | grep -v '^$')
+  [[ -n $pool ]] || { printf '[]'; return 0; }
+  # Two categories per request rather than one. A theme is only a handful of
+  # categories and a category is 20 to 50 files, so asking for two at a time is
+  # what keeps a single-filter rotation from serving the same pictures again.
+  cats=$(printf '%s\n' "$pool" | shuf -n 2)
+  for cat in $cats; do
+    [[ -n $cat ]] || continue
+    page=$(curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:$(urlencode "$cat")&gcmtype=file&gcmlimit=$PAGE_SIZE&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=$scaled" |
+      jq -c --argjson minw "$min_w" --argjson minh "$min_h" --arg theme "$theme" \
+        '[.query.pages[]? | (.imageinfo[0] // {}) as $ii | {
+          source: "wikimedia",
+          id: ((.title // "") | sub("^File:"; "")),
+          theme: $theme,
+          full: ($ii.thumburl // $ii.url),
+          alt: ($ii.url // ""),
+          thumb: ($ii.thumburl // $ii.url),
+          width: ($ii.width // 0),
+          height: ($ii.height // 0),
+          credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
+          link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
+          license: ($ii.extmetadata.LicenseShortName.value // "Free license")
+        } | select(.width >= $minw and .height >= $minh)]' 2>/dev/null)
+    [[ -n $page && $page != "null" ]] && rows=$(jq -c --argjson b "$page" '. + $b' <<<"$rows")
+  done
+  printf '%s' "$rows"
 }
 
-# Konachan is the safe side of an image board built around wallpapers: it is
-# where anime art at 4K and beyond lives, tagged by scene, with the artist and
-# the original page on every post. The safe rating and the minimum size are part
-# of the query rather than a promise, so a request is spent on something that
-# can actually fill the screen.
-candidates_konachan() {
-  local theme=$1 min_w=$2 min_h=$3 tag
-  tag=$(catalog_get "$theme" konachan | tr ',' '\n' | grep -v '^$' | shuf -n 1)
-  [[ -n $tag ]] || { printf '[]'; return 0; }
-  curl_json "https://konachan.net/post.json?tags=rating%3Asafe+width%3A%3E%3D${min_w}+height%3A%3E%3D${min_h}+$(urlencode "$tag")+order%3Arandom&limit=24" |
-    jq -c --arg theme "$theme" '[.[]? | select(.file_url != null and .id != null) | {
-      source: "konachan",
+# Konachan and Yande.re run the same image board software and both are built
+# around wallpapers: they are where anime art at 4K and beyond lives, tagged by
+# scene, with the artist and the original page on every post. The safe rating
+# and the minimum size are part of the query rather than a promise, so a request
+# is spent on something that can actually fill the screen.
+candidates_booru() {
+  local host=$1 name=$2 theme=$3 min_w=$4 min_h=$5 tag="" url page limit=60
+  # A tag most of the time gives scene variety (city, night, water), and no tag
+  # the rest of the time opens the whole safe 4K library of the board. Together
+  # with a random page this is what keeps a single-filter rotation from serving
+  # the same pictures twice.
+  page=$((RANDOM % 30 + 1))
+  if ((RANDOM % 10 < 7)); then
+    tag=$(catalog_get "$theme" "$name" | tr ',' '\n' | grep -v '^$' | shuf -n 1)
+  fi
+  url="https://$host/post.json?tags=rating%3Asafe+width%3A%3E%3D${min_w}+height%3A%3E%3D${min_h}"
+  [[ -n $tag ]] && url+="+$(urlencode "$tag")"
+  url+="&limit=$limit&page=$page"
+  curl_json "$url" |
+    jq -c --arg src "$name" --arg host "$host" --arg theme "$theme" '[.[]? | select(.file_url != null and .id != null) | {
+      source: $src,
       id: (.id | tostring),
       theme: $theme,
       full: .file_url,
@@ -438,9 +484,51 @@ candidates_konachan() {
       width: (.width // 0),
       height: (.height // 0),
       credit: (if (.author // "") == "tagme" then "" else (.author // "") end),
-      link: ("https://konachan.net/post/show/" + (.id | tostring)),
+      link: ("https://" + $host + "/post/show/" + (.id | tostring)),
       license: "Fan art, credited to its artist"
     }]'
+}
+
+candidates_konachan() { candidates_booru konachan.net konachan "$@"; }
+
+candidates_yandere() { candidates_booru yande.re yandere "$@"; }
+
+# ESA/Hubble and ESA/Webb publish their pictures of the week as a feed, and
+# every entry has a large variant on their CDN that runs to several thousand
+# pixels. Pure astrophotography with no landscape in it, which is what the
+# space theme is supposed to be.
+esa_feed_items() {
+  curl_json "$1" | tr -d '\n' | sed 's/<item>/\n<item>/g' | sed -n '2,$p' |
+    sed 's/&amp;/\&/g' |
+    sed -n 's|.*<title>\([^<]*\)</title><link>https://[a-z0-9.]*/images/\([a-z0-9]*\)/</link>.*|\2\t\1|p'
+}
+
+candidates_esa() {
+  local theme=$1 rows="[]" item url cdn credit page
+  for spec in "https://esahubble.org/images/feed/ https://cdn.esahubble.org ESA/Hubble https://esahubble.org" \
+              "https://esawebb.org/images/feed/ https://cdn.esawebb.org ESA/Webb https://esawebb.org"; do
+    set -- $spec
+    url=$1; cdn=$2; credit=$3; page=$4
+    # The feed is paginated, and each page carries a different set of pictures
+    # of the week, so a random page doubles the pool this source can draw on.
+    item=$(esa_feed_items "$url?page=$((RANDOM % 2 + 1))" | jq -R -s --arg cdn "$cdn" --arg credit "$credit" \
+      --arg page "$page" --arg theme "$theme" '
+      split("\n") | map(select(length > 0) | split("\t")) | map(select(length >= 2)) | map({
+        source: "esa",
+        id: .[0],
+        theme: $theme,
+        full: ($cdn + "/archives/images/large/" + .[0] + ".jpg"),
+        alt: ($cdn + "/archives/images/screen/" + .[0] + ".jpg"),
+        thumb: ($cdn + "/archives/images/screen/" + .[0] + ".jpg"),
+        width: 0,
+        height: 0,
+        credit: (.[1] + ", " + $credit),
+        link: ($page + "/images/" + .[0] + "/"),
+        license: "ESA/Hubble and NASA, CC BY 4.0"
+      })' 2>/dev/null)
+    [[ -n $item && $item != "null" ]] && rows=$(jq -c --argjson b "$item" '. + $b' <<<"$rows")
+  done
+  printf '%s' "$rows"
 }
 # Picsum serves Unsplash photographs through its own API with nothing to sign
 # up for. The picture is requested at the screen's own size, so the server does
@@ -470,12 +558,16 @@ fetch_candidates() {
   case $src in
     bing)      rows=$(candidates_bing) ;;
     wikimedia) rows=$(candidates_wikimedia "$theme" "$min_w" "$min_h") ;;
+    esa)       rows=$(candidates_esa "$theme") ;;
     konachan)  rows=$(candidates_konachan "$theme" "$min_w" "$min_h") ;;
+    yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
     *)         printf '[]'; return 0 ;;
   esac
   [[ -n $rows && $rows != "null" ]] || { printf '[]'; return 0; }
   # Size and shape are checked on the metadata a source declares.
+  local block pat
+  block=$(theme_block "$theme")
   while IFS= read -r row; do
     w=$(jq -r '.width // 0' <<<"$row"); h=$(jq -r '.height // 0' <<<"$row")
     if [[ $w == "0" || $h == "0" ]]; then
@@ -486,6 +578,11 @@ fetch_candidates() {
     aspect_ok "$w" "$h" || continue
     out=$(jq -c --argjson r "$row" '. + [$r]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows" 2>/dev/null)
+  # Then the keywords, on every source including the ones that declare no size.
+  if [[ -n $block ]]; then
+    pat=$(printf '%s' "$block" | tr ' ' '|')
+    out=$(jq -c --arg pat "$pat" '[.[] | select((.id | ascii_downcase | test($pat)) | not)]' <<<"$out" 2>/dev/null)
+  fi
   printf '%s' "$out"
 }
 

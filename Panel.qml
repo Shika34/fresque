@@ -143,18 +143,10 @@ Panel {
     runAction("skip")
   }
 
-  // Favourites are moved, not copied: one file, one place, and the pruning
+  // Favorites are moved, not copied: one file, one place, and the pruning
   // code never looks in that folder.
   function toggleFavorite() {
     runAction(isFavorite ? "unfavorite" : "favorite")
-  }
-
-  function openSource() {
-    var url = Model.safeLink(current.link || "")
-    if (url === "" || !bar) return
-    // shellQuote keeps a link with shell characters a data argument rather
-    // than a piece of the command.
-    bar.run("xdg-open " + bar.shellQuote(url))
   }
 
   FileView {
@@ -254,7 +246,11 @@ Panel {
 
       Column {
         id: content
-        width: parent.width
+        // The block as a whole stays centred in the window, and everything
+        // inside it lines up on the left, which is what keeps a column of
+        // labels and chips readable instead of floating.
+        width: parent.width - Style.space(48)
+        anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(14)
 
         // ---- What is on screen. The file is already decoded by the
@@ -296,7 +292,6 @@ Panel {
 
           Row {
             spacing: Style.space(8)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Text {
               text: root.sourceName
@@ -337,7 +332,7 @@ Panel {
             elide: Text.ElideRight
             maximumLineCount: 2
             wrapMode: Text.WordWrap
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -349,7 +344,7 @@ Panel {
               ? Style.hoverStateColor(root.contentForeground, Color.accent)
               : root.contentForeground
             opacity: root.notice !== "" ? 1 : 0.45
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -366,14 +361,13 @@ Panel {
             text: Model.t("schedule")
             color: root.contentForeground
             opacity: 0.55
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.INTERVAL_MINUTES
@@ -426,14 +420,13 @@ Panel {
             text: Model.t("themes")
             color: root.contentForeground
             opacity: 0.55
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.THEMES
@@ -486,14 +479,13 @@ Panel {
             text: Model.t("sources")
             color: root.contentForeground
             opacity: 0.55
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Repeater {
               model: Model.SOURCES
@@ -547,14 +539,13 @@ Panel {
             text: root.favoritesLabel
             color: root.contentForeground
             opacity: 0.55
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: Text.AlignLeft
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Row {
             spacing: Style.space(4)
-            anchors.horizontalCenter: parent.horizontalCenter
 
             Rectangle {
               width: onlyFavoritesLabel.implicitWidth + Style.space(14)
@@ -593,7 +584,6 @@ Panel {
         //      ones that do something.
         Row {
           spacing: Style.space(8)
-          anchors.horizontalCenter: parent.horizontalCenter
 
           Rectangle {
             width: nextLabel.implicitWidth + Style.space(24)
@@ -686,34 +676,6 @@ Panel {
               onClicked: root.toggleFavorite()
             }
           }
-
-          Rectangle {
-            width: sourceButtonLabel.implicitWidth + Style.space(20)
-            height: Style.space(30)
-            radius: Style.space(5)
-            visible: Model.safeLink(root.current.link || "") !== ""
-            color: "transparent"
-            border.width: 1
-            border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.25)
-
-            Text {
-              id: sourceButtonLabel
-              anchors.centerIn: parent
-              text: Model.t("openSource")
-              color: root.contentForeground
-              opacity: sourceMouse.containsMouse ? 1 : 0.7
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            MouseArea {
-              id: sourceMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.openSource()
-            }
-          }
         }
 
         // ---- One line of reference, then nothing.
@@ -722,7 +684,7 @@ Panel {
           text: Model.t("closeHint")
           color: root.contentForeground
           opacity: 0.35
-          horizontalAlignment: Text.AlignHCenter
+          horizontalAlignment: Text.AlignLeft
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
         }
