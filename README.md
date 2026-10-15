@@ -11,7 +11,7 @@ whole thing changes on its own. It changes once a day by default, and the folder
 it keeps stays at the size you choose.
 
 ```sh
-omarchy plugin add https://github.com/mitch/fresque.git --enable
+omarchy plugin add https://github.com/Shika34/fresque.git --enable
 ```
 
 Nothing else to do. Fresque installs its first wallpaper when it is enabled and
@@ -139,7 +139,7 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 ## Development
 
 ```sh
-git clone https://github.com/mitch/fresque.git \
+git clone https://github.com/Shika34/fresque.git \
   ~/.config/omarchy/plugins/mitch.fresque
 omarchy plugin validate ~/.config/omarchy/plugins/mitch.fresque
 omarchy-shell shell rescanPlugins

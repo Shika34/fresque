@@ -45,7 +45,7 @@ SELF="${BASH_SOURCE[0]}"
 
 # A user agent that names the plugin, so a source's maintainers can see who is
 # asking. It applies to every request, JSON or image.
-USER_AGENT="fresque/2.0 (Omarchy wallpaper plugin, +https://github.com/mitch/fresque)"
+USER_AGENT="fresque/2.0 (Omarchy wallpaper plugin, +https://github.com/Shika34/fresque)"
 
 # HTTPS is required for the request and for every redirect, so a source or a
 # compromised CDN cannot downgrade a fetch to plain HTTP.
