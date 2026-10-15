@@ -49,7 +49,14 @@ Panel {
   readonly property string creditText: Model.singleLine(current.credit || "", 120)
   readonly property string resolutionText: Model.formatSize(current.width, current.height)
   readonly property string dueText: Model.dueLabel(current.appliedAt, current.retryAt, rotateMinutes)
-  readonly property string favoritesLabel: Model.t("favorites") + (favoriteCount > 0 ? " (" + favoriteCount + ")" : "")
+  // Labels are read from a property rather than through a translation call:
+  // Model.js is a plain library, so calling into it leaves QML nothing to
+  // watch and a label keeps the language it was born with. Reading a property
+  // keeps the whole panel in step with the chosen language.
+  readonly property string langKey: Model.localeKey(config.language || "auto")
+  readonly property var strings: Model.stringsFor(langKey)
+
+  readonly property string favoritesLabel: strings.favorites + (favoriteCount > 0 ? " (" + favoriteCount + ")" : "")
   readonly property int sourcesOn: Number(info.sourcesOn) || 0
   readonly property int themesOn: Number(info.themesOn) || 0
   readonly property int stagedCount: Number(info.staged) || 0
@@ -63,13 +70,13 @@ Panel {
   readonly property bool statusAlert: notice !== "" || noSources
   readonly property string statusText: {
     if (notice !== "") return notice
-    if (noSources) return Model.t("noSources")
-    if (noFilter) return Model.t("noFilter")
+    if (noSources) return strings.noSources
+    if (noFilter) return strings.noFilter
     return dueText
   }
   readonly property string footerText: {
-    var hint = Model.t("closeHint")
-    return stagedCount > 0 ? Model.t("ready", { n: stagedCount }) + " · " + hint : hint
+    var hint = strings.closeHint
+    return stagedCount > 0 ? strings.ready.replace("{n}", stagedCount) + " · " + hint : hint
   }
 
   function open() {
@@ -159,7 +166,7 @@ Panel {
   function runAction(name) {
     if (working) return
     working = true
-    notice = Model.t("working") + "..."
+    notice = strings.working + "..."
     actionProcess.command = [root.cliPath, name]
     actionProcess.running = true
   }
@@ -231,7 +238,7 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.working = false
-      root.notice = exitCode === 0 ? "" : Model.t(root.favoritesOnly ? "noFavorites" : "offline")
+      root.notice = exitCode === 0 ? "" : (root.favoritesOnly ? strings.noFavorites : strings.offline)
       root.reload()
       root.runStatus()
     }
@@ -307,7 +314,7 @@ Panel {
           Text {
             anchors.centerIn: parent
             visible: hero.status !== Image.Ready
-            text: root.working ? Model.t("loading") + "..." : Model.t("empty")
+            text: root.working ? strings.loading + "..." : strings.empty
             color: root.contentForeground
             opacity: 0.6
             font.family: root.contentFontFamily
@@ -389,7 +396,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: Model.t("schedule")
+            text: root.strings.schedule
             color: root.contentForeground
             opacity: 0.55
             horizontalAlignment: Text.AlignLeft
@@ -448,7 +455,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: Model.t("themes")
+            text: root.strings.themes
             color: root.contentForeground
             opacity: 0.55
             horizontalAlignment: Text.AlignLeft
@@ -507,7 +514,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: Model.t("sources")
+            text: root.strings.sources
             color: root.contentForeground
             opacity: 0.55
             horizontalAlignment: Text.AlignLeft
@@ -591,7 +598,7 @@ Panel {
               Text {
                 id: onlyFavoritesLabel
                 anchors.centerIn: parent
-                text: Model.t("onlyFavorites")
+                text: root.strings.onlyFavorites
                 color: root.favoritesOnly
                   ? Style.selectedStateColor(root.contentForeground, Color.accent)
                   : root.contentForeground
@@ -629,7 +636,7 @@ Panel {
             Text {
               id: nextLabel
               anchors.centerIn: parent
-              text: root.working ? Model.t("working") + "..." : Model.t("next")
+              text: root.working ? root.strings.working + "..." : root.strings.next
               color: root.contentForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
@@ -659,7 +666,7 @@ Panel {
             Text {
               id: skipLabel
               anchors.centerIn: parent
-              text: Model.t("skip")
+              text: root.strings.skip
               color: root.contentForeground
               opacity: 0.8
               font.family: root.contentFontFamily
@@ -689,7 +696,7 @@ Panel {
             Text {
               id: favoriteLabel
               anchors.centerIn: parent
-              text: root.isFavorite ? Model.t("unfavorite") : Model.t("favorite")
+              text: root.isFavorite ? root.strings.unfavorite : root.strings.favorite
               color: root.isFavorite
                 ? Style.selectedStateColor(root.contentForeground, Color.accent)
                 : root.contentForeground

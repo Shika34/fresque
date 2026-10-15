@@ -3,7 +3,7 @@
 **A pleasure for the eyes.** Quality wallpapers for [Omarchy](https://omarchy.org/),
 with nothing to configure: you install it, and there is a wallpaper.
 
-![The Fresque panel on a real desktop](docs/panel.jpg)
+![The Fresque panel open on a desktop](docs/hero.jpg)
 
 It is made to be looked at. Every picture is at least as large as your screen and
 shaped like it, the author and the licence sit right there in the panel, and the
@@ -21,7 +21,7 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Six sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, ESA/Hubble and ESA/Webb telescope imagery, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
+| **Six sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
 | **An instant switch** | Two wallpapers are downloaded ahead of time, so asking for the next one takes about a third of a second instead of a few seconds. One is fetched in the background as soon as you pick one, and the pool never grows past four |
@@ -33,9 +33,9 @@ then takes a new one every day.
 
 ## What it can put on your screen
 
-![A galaxy from ESA/Hubble, a waterfall from Wikimedia Commons, an anime scene from Konachan](docs/wallpapers.jpg)
+![The Milky Way over Gemini South, a hermit crab in Madagascar, an anime scene from Konachan](docs/wallpapers.jpg)
 
-Three of the six sources, three of the six themes: ESA/Hubble for Space,
+Three of the six sources, three of the six themes: NOIRLab for Space,
 Wikimedia Commons for Nature, Konachan for Anime. Each picture keeps its author
 and its licence in the panel.
 
@@ -43,9 +43,9 @@ and its licence in the panel.
 
 | Source | What it serves | Licence |
 |---|---|---|
-| Bing | The day's photograph. Used only when no theme filter is set, since the picture is chosen by someone else | Bing, credited to its author |
+| Bing | The day's photograph, served with the Photos theme. Nothing else is claimed about it, since the picture is chosen by someone else | Bing, credited to its author |
 | Wikimedia Commons | Featured and quality photography, and featured galaxy pictures for Space | Free licence per image, shown in the panel |
-| ESA/Hubble, ESA/Webb | Telescope imagery: nebulae, galaxies, star clusters | ESA/Hubble and NASA, CC BY 4.0 |
+| NOIRLab | The image of the week: the Milky Way over an observatory, a comet, an eclipse, the odd galaxy | NOIRLab/NSF/AURA, CC BY 4.0 |
 | Konachan, Yande.re | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
 
@@ -95,7 +95,7 @@ fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
 fresque config set language ja          # auto or en zh hi es fr ar pt ru ja de it ko tr
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
-fresque config set sources.esa false    # turn a source off (bing wikimedia esa konachan yandere picsum)
+fresque config set sources.noirlab false # turn a source off (bing wikimedia noirlab konachan yandere picsum)
 ```
 
 The script lives at `~/.config/omarchy/plugins/io.github.shika34.fresque/bin/fresque`.

@@ -9,9 +9,9 @@
 // it is only used when no theme filter is set, rather than being allowed to
 // slip a landscape into a request for animals or space.
 var SOURCES = [
-  { id: "bing",      label: "Bing",      themes: ["any"] },
+  { id: "bing",      label: "Bing",      themes: ["photos"] },
   { id: "wikimedia", label: "Wikimedia", themes: ["nature", "space", "architecture", "animals"] },
-  { id: "esa",       label: "ESA/Hubble", themes: ["space"] },
+  { id: "noirlab",   label: "NOIRLab",   themes: ["space"] },
   { id: "konachan",  label: "Konachan",  themes: ["anime"] },
   { id: "yandere",   label: "Yande.re",  themes: ["anime"] },
   { id: "picsum",    label: "Unsplash",  themes: ["photos"] }
@@ -495,8 +495,11 @@ function setLanguage(code) {
 
 function languageCodes() { return LANGUAGE_CODES }
 
-function localeKey() {
-  if (language !== "auto") return language
+// The effective language: a code when one was chosen, the system language
+// otherwise, and English when the system language is not one of the thirteen.
+function localeKey(code) {
+  var chosen = code === undefined ? language : code
+  if (chosen && chosen !== "auto") return chosen
   try {
     var name = Qt.locale().name.toLowerCase().replace("_", "-")
     var base = name.split("-")[0]
@@ -506,6 +509,12 @@ function localeKey() {
     return "en"
   }
   return "en"
+}
+
+// The whole table, for interfaces that read their labels from a QML property:
+// a binding on that property follows the language, a call to t() does not.
+function stringsFor(code) {
+  return STRINGS[localeKey(code)] || STRINGS.en
 }
 
 function t(key, values) {
@@ -585,7 +594,6 @@ function sourceMatches(sourceId, themesMap) {
   for (var i = 0; i < SOURCES.length; i++) {
     if (SOURCES[i].id !== sourceId) continue
     var served = SOURCES[i].themes
-    if (served.length === 1 && served[0] === "any") return countOn(themesMap) === THEMES.length
     for (var j = 0; j < served.length; j++)
       if (themesMap && themesMap[served[j]] === true) return true
     return false

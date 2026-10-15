@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=6
+CONFIG_VERSION=7
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -51,13 +51,13 @@ USER_AGENT="fresque/2.0 (Omarchy wallpaper plugin, +https://github.com/Shika34/f
 # compromised CDN cannot downgrade a fetch to plain HTTP.
 curl_json() {
   curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_JSON_BYTES" \
-    --max-time 25 --silent --show-error --location --fail \
+    --connect-timeout 10 --max-time 25 --silent --show-error --location --fail \
     -A "$USER_AGENT" -H 'Accept: application/json' "$1"
 }
 
 curl_file() {
   curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_IMAGE_BYTES" \
-    --max-time 180 --silent --show-error --location --fail \
+    --connect-timeout 15 --max-time 180 --silent --show-error --location --fail \
     -A "$USER_AGENT" -o "$2" "$1"
 }
 
@@ -71,7 +71,7 @@ remote_probe() {
   local tmp dims total
   tmp="$STATE_DIR/probe.$$" || return 1
   total=$(curl --proto '=https' --proto-redir '=https' --silent --show-error --location \
-    --fail --max-time 20 --range 0-65535 --dump-header - --output "$tmp" "$1" 2>/dev/null |
+    --fail --connect-timeout 8 --max-time 20 --range 0-65535 --dump-header - --output "$tmp" "$1" 2>/dev/null |
     awk -F'/' 'tolower($1) ~ /content-range/ { gsub(/[^0-9]/, "", $2); v = $2 } END { print v }')
   if [[ -s $tmp ]]; then dims=$(image_dimensions "$tmp"); fi
   rm -f "$tmp"
@@ -184,9 +184,9 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 6,
+  "version": 7,
   "rotateMinutes": 1440,
-  "sources": { "bing": true, "wikimedia": true, "esa": true, "konachan": true, "yandere": true, "picsum": true },
+  "sources": { "bing": true, "wikimedia": true, "noirlab": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
@@ -208,8 +208,12 @@ ensure_config() {
     # interval survives, a source that disappeared is dropped, and a source
     # that is new here shows up with its default.
     local merged
-    merged=$(jq -c --argjson d "$DEFAULT_CONFIG" \
-      '$d * . | .version = $d.version' "$CONFIG_FILE.bak" 2>/dev/null)
+    # The space source was rebuilt around NOIRLab, so a choice made about the
+    # old one is carried over before it is dropped.
+    merged=$(jq -c --argjson d "$DEFAULT_CONFIG" '
+      $d * . | .version = $d.version
+      | if (.sources | has("esa")) and (.sources.noirlab == null) then .sources.noirlab = .sources.esa else . end
+      | del(.sources.esa)' "$CONFIG_FILE.bak" 2>/dev/null)
     if [[ -n $merged ]]; then
       printf '%s\n' "$merged" >"$CONFIG_FILE" || die "cannot write $CONFIG_FILE"
       echo "fresque: config migrated from schema v$version to v$CONFIG_VERSION (previous copy at $CONFIG_FILE.bak)" >&2
@@ -237,7 +241,7 @@ cfg_write() {
 
 cfg_set() {
   ensure_config
-  local key=$1 value=${2-} tmp
+  local key=$1 value=${2-} tmp pool_stale= dropped
   case $key in
     rotateMinutes)
       case $value in 0|5|15|30|60|180|360|1440) ;; *) die "rotateMinutes must be one of 0 5 15 30 60 180 360 1440, got: $value" ;; esac
@@ -251,7 +255,8 @@ cfg_set() {
       tmp=$(jq --argjson v "$value" '.expose = $v' "$CONFIG_FILE") ;;
     favoritesOnly)
       case $value in true|false) ;; *) die "favoritesOnly must be true or false, got: $value" ;; esac
-      tmp=$(jq --argjson v "$value" '.favoritesOnly = $v' "$CONFIG_FILE") ;;
+      tmp=$(jq --argjson v "$value" '.favoritesOnly = $v' "$CONFIG_FILE")
+      pool_stale=1 ;;
     language)
       case $value in auto|en|zh|hi|es|fr|ar|pt|ru|ja|de|it|ko|tr) ;; *) die "language must be auto or one of en zh hi es fr ar pt ru ja de it ko tr, got: $value" ;; esac
       tmp=$(jq --arg v "$value" '.language = $v' "$CONFIG_FILE") ;;
@@ -262,16 +267,26 @@ cfg_set() {
       local src=${key#sources.}
       is_source "$src" || die "unknown source: $src"
       case $value in true|false) ;; *) die "source state must be true or false, got: $value" ;; esac
-      tmp=$(jq --arg s "$src" --argjson v "$value" '.sources[$s] = $v' "$CONFIG_FILE") ;;
+      tmp=$(jq --arg s "$src" --argjson v "$value" '.sources[$s] = $v' "$CONFIG_FILE")
+      pool_stale=1 ;;
     themes.*)
       local theme=${key#themes.}
       is_theme "$theme" || die "unknown theme: $theme"
       case $value in true|false) ;; *) die "theme state must be true or false, got: $value" ;; esac
-      tmp=$(jq --arg t "$theme" --argjson v "$value" '.themes[$t] = $v' "$CONFIG_FILE") ;;
+      tmp=$(jq --arg t "$theme" --argjson v "$value" '.themes[$t] = $v' "$CONFIG_FILE")
+      pool_stale=1 ;;
     *) die "unknown config key: $key (try: $CONFIG_KEYS)" ;;
   esac
   [[ -n $tmp ]] || die "failed to update $key"
   cfg_write "$tmp"
+  # Only the settings that decide what may be served invalidate the pool: an
+  # interval or a language leaves it valid, because it holds nothing but files
+  # that are still eligible.
+  if [[ -n $pool_stale ]]; then
+    dropped=$(stage_drop)
+    ((dropped > 0)) && printf 'fresque: %s prepared image(s) dropped, they no longer match the filters\n' "$dropped" >&2
+    stage_refill 2
+  fi
 }
 
 # ---------------------------------------------------------------- themes
@@ -292,8 +307,8 @@ CATALOG='{
   "anime":        { "konachan": "landscape,sky,night,city,water,cherry_blossoms,flowers,clouds,stars,sunset,winter,moon,building", "yandere": "landscape,flowers,city,stars" }
 }'
 
-SOURCE_IDS="bing wikimedia esa konachan yandere picsum"
-SOURCE_WEIGHTS="bing=15 wikimedia=30 esa=18 konachan=15 yandere=12 picsum=10"
+SOURCE_IDS="bing wikimedia noirlab konachan yandere picsum"
+SOURCE_WEIGHTS="bing=15 wikimedia=30 noirlab=18 konachan=15 yandere=12 picsum=10"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -301,7 +316,7 @@ source_label() {
   case $1 in
     bing)      printf 'Bing' ;;
     wikimedia) printf 'Wikimedia Commons' ;;
-    esa)       printf 'ESA/Hubble' ;;
+    noirlab)   printf 'NOIRLab' ;;
     konachan)  printf 'Konachan' ;;
     yandere)   printf 'Yande.re' ;;
     picsum)    printf 'Unsplash' ;;
@@ -345,9 +360,9 @@ theme_block() { jq -r --arg t "$1" '.[$t] // ""' <<<"$THEME_BLOCK" 2>/dev/null; 
 # landscape into a request for animals or space.
 source_themes() {
   case $1 in
-    bing)      printf 'any' ;;
+    bing)      printf 'photos' ;;
     wikimedia) printf 'nature space architecture animals' ;;
-    esa)       printf 'space' ;;
+    noirlab)   printf 'space' ;;
     konachan)  printf 'anime' ;;
     yandere)   printf 'anime' ;;
     picsum)    printf 'photos' ;;
@@ -468,7 +483,7 @@ candidates_bing() {
     jq -c '[.images[]? | {
       source: "bing",
       id: (.startdate // .enddate),
-      theme: "any",
+      theme: "photos",
       full: ("https://www.bing.com" + .urlbase + "_UHD.jpg&pid=hp"),
       alt: ("https://www.bing.com" + (.url // "")),
       thumb: ("https://www.bing.com" + (.url // "")),
@@ -552,45 +567,49 @@ candidates_konachan() { candidates_booru konachan.net konachan "$@"; }
 
 candidates_yandere() { candidates_booru yande.re yandere "$@"; }
 
-# ESA/Hubble and ESA/Webb publish their pictures of the week as a feed, and
-# every entry has a large variant on their CDN that runs to several thousand
-# pixels. Pure astrophotography with no landscape in it, which is what the
-# space theme is supposed to be.
-esa_feed_items() {
+# NOIRLab publishes an image of the week, and its archive keeps a full size
+# rendering of each one. Curated sky photography: the Milky Way over an
+# observatory, a comet, an eclipse, and the occasional galaxy.
+astro_feed_items() {
   curl_json "$1" | tr -d '\n' | sed 's/<item>/\n<item>/g' | sed -n '2,$p' |
     sed 's/&amp;/\&/g' |
-    sed -n 's|.*<title>\([^<]*\)</title><link>https://[a-z0-9.]*/images/\([a-z0-9]*\)/</link>.*|\2\t\1|p'
+    sed -n 's|.*<title>\([^<]*\)</title><link>[^<]*/images/\([a-z0-9]*\)/</link>.*|\2\t\1|p'
 }
 
-candidates_esa() {
-  local theme=$1 min_w=$2 min_h=$3 rows="[]" item url cdn credit page full size row kept dims w h
-  for spec in "https://esahubble.org/images/feed/ https://cdn.esahubble.org ESA/Hubble https://esahubble.org" \
-              "https://esawebb.org/images/feed/ https://cdn.esawebb.org ESA/Webb https://esawebb.org"; do
+# A diagram of an instrument or an artist's impression is not a wallpaper, and
+# the releases mix them in with the photographs. The title says which is which,
+# so the graphics are dropped before anything is downloaded.
+GRAPHIC_TITLES='diagram|illustration|artist|infographic|chart|spectrum|schematic|comparison|composite|model|annotated|labelled|labeled|crop|cutout|collage|location of|close-up|panorama|mosaic'
+
+candidates_noirlab() {
+  local theme=$1 min_w=$2 min_h=$3 rows="[]" item spec
+  local full size row kept dims w h
+  for spec in "https://noirlab.edu/public/images/iotw/feed/ https://storage.noirlab.edu/media/archives/images NOIRLab Image of the Week NOIRLab/NSF/AURA, CC BY 4.0"; do
     set -- $spec
-    url=$1; cdn=$2; credit=$3; page=$4
-    # The feed is paginated, and each page carries a different set of pictures
-    # of the week, so a random page doubles the pool this source can draw on.
-    item=$(esa_feed_items "$url?page=$((RANDOM % 2 + 1))" | jq -R -s --arg cdn "$cdn" --arg credit "$credit" \
-      --arg page "$page" --arg theme "$theme" '
+    local url=$1 cdn=$2 credit=$3 license=$4 page="https://noirlab.edu/public/images"
+    item=$(astro_feed_items "$url" | jq -R -s --arg cdn "$cdn" --arg credit "$credit" \
+      --arg page "$page" --arg theme "$theme" --arg graphic "$GRAPHIC_TITLES" --arg license "$license" '
       split("\n") | map(select(length > 0) | split("\t")) | map(select(length >= 2)) | map({
-        source: "esa",
+        source: "noirlab",
         id: .[0],
+        title: .[1],
         theme: $theme,
-        full: ($cdn + "/archives/images/large/" + .[0] + ".jpg"),
-        alt: ($cdn + "/archives/images/screen/" + .[0] + ".jpg"),
-        thumb: ($cdn + "/archives/images/screen/" + .[0] + ".jpg"),
+        full: ($cdn + "/large/" + .[0] + ".jpg"),
+        alt: ($cdn + "/screen/" + .[0] + ".jpg"),
+        thumb: ($cdn + "/screen/" + .[0] + ".jpg"),
         width: 0,
         height: 0,
         credit: (.[1] + ", " + $credit),
-        link: ($page + "/images/" + .[0] + "/"),
-        license: "ESA/Hubble and NASA, CC BY 4.0"
-      })' 2>/dev/null)
+        link: ($page + "/" + .[0] + "/"),
+        license: $license
+      }) | map(select(((.title // "") | test($graphic; "i")) | not))' 2>/dev/null)
     [[ -n $item && $item != "null" ]] || continue
-    # Telescope pictures are not all wallpaper shaped, and the feed says nothing
-    # about their size. Measuring the header of each candidate costs 64 KB and
-    # settles both questions, so nothing big is downloaded only to be refused.
+    # The full size renderings run from 2 MP to 140 MP, and the feed says nothing
+    # about which is which. Measuring the header of each candidate costs 64 KB
+    # and settles both the shape and the weight, so nothing huge is downloaded
+    # only to be refused.
     kept="[]"
-    for row in $(jq -r '.[] | @base64' <<<"$item" | shuf -n 6); do
+    for row in $(jq -r '.[] | @base64' <<<"$item" | shuf -n 10); do
       row=$(printf '%s' "$row" | base64 -d 2>/dev/null)
       [[ -n $row ]] || continue
       full=$(jq -r '.full' <<<"$row")
@@ -601,7 +620,7 @@ candidates_esa() {
       [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
       ((w >= min_w && h >= min_h)) || continue
       aspect_ok "$w" "$h" || continue
-      # A telescope mosaic can be 30 MB and there is no point downloading one
+      # A stitched panorama can be 140 MB and there is no point downloading one
       # wallpaper rotation.
       [[ $size =~ ^[0-9]+$ ]] && ((size > 8000000)) && continue
       row=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$row")
@@ -639,7 +658,7 @@ fetch_candidates() {
   case $src in
     bing)      rows=$(candidates_bing) ;;
     wikimedia) rows=$(candidates_wikimedia "$theme" "$min_w" "$min_h") ;;
-    esa)       rows=$(candidates_esa "$theme" "$min_w" "$min_h") ;;
+    noirlab)   rows=$(candidates_noirlab "$theme" "$min_w" "$min_h") ;;
     konachan)  rows=$(candidates_konachan "$theme" "$min_w" "$min_h") ;;
     yandere)   rows=$(candidates_yandere "$theme" "$min_w" "$min_h") ;;
     picsum)    rows=$(candidates_picsum "$min_w" "$min_h") ;;
@@ -954,6 +973,26 @@ stage_add() {
 }
 
 # Takes one ready file out of the pool and rewrites the list without it.
+# The ready list holds files, not decisions: whatever filled it, what goes on
+# screen has to match the filters as they are now. A picture prepared before a
+# filter changed, or by an older version of the plugin, is refused here rather
+# than shown under a theme it does not belong to.
+stage_eligible() {
+  local path=$1 base src theme
+  [[ -n $path && -f $path ]] || return 1
+  base=$(basename "$path")
+  src=$(meta_get "$base" 2)
+  if [[ -z $src ]]; then
+    src=$(printf '%s' "$base" | sed -n "s/^$FILE_PREFIX\([a-z]*\)-.*/\1/p")
+  fi
+  [[ -n $src ]] || return 1
+  source_enabled "$src" || return 1
+  filter_active || return 0
+  theme=$(meta_get "$base" 7)
+  [[ -n $theme && $theme != any && $theme != null ]] || return 0
+  theme_enabled "$theme"
+}
+
 stage_pop() {
   local f found=""
   [[ -f $STAGED_FILE ]] || return 1
@@ -973,6 +1012,22 @@ stage_pop() {
 
 is_staged() {
   [[ -f $STAGED_FILE ]] && grep -qxF "$1" "$STAGED_FILE"
+}
+
+# A pool filled under other filters is worse than an empty one: the next click
+# would serve a picture the user has just excluded, and the panel would show a
+# theme the image does not belong to. The files stay in the library where the
+# usual cap recycles them, only the ready list is emptied, and a refill starts
+# in the background under the new filters.
+stage_drop() {
+  [[ -f $STAGED_FILE ]] || return 0
+  local n
+  # grep -c prints 0 and fails on an empty file, so the failure is swallowed
+  # rather than replaced by a second count.
+  n=$(grep -c . "$STAGED_FILE" 2>/dev/null || true)
+  n=${n:-0}
+  : >"$STAGED_FILE"
+  printf '%s' "$n"
 }
 
 # Refills the pool in the background. Detached on purpose: the click that
@@ -1002,6 +1057,7 @@ cmd_next() {
   # A wallpaper fetched in advance is already on disk, so putting it on screen
   # costs nothing. The pool is refilled behind the scenes afterwards.
   staged=$(stage_pop)
+  while [[ -n $staged ]] && ! stage_eligible "$staged"; do staged=$(stage_pop); done
   if [[ -n $staged ]] && apply_local "$staged"; then
     stage_refill 2
     return 0
@@ -1071,7 +1127,7 @@ cmd_prefetch() {
 # Serves one of the favorites, at random, skipping the one on screen and
 # anything the user blocked.
 cmd_next_favorite() {
-  local dir current f src id files=() candidates=() n
+  local dir current f src id theme files=() candidates=() n filtered=0 t hit
   dir=$(favorites_dir)
   [[ -d $dir ]] || return 1
   current=$(jq -r '.path // ""' <<<"$(cur_json)")
@@ -1080,14 +1136,37 @@ cmd_next_favorite() {
   done < <(find "$dir" -maxdepth 1 -type f -name "$FILE_PREFIX*" 2>/dev/null | sort)
   ((${#files[@]} > 0)) || return 1
 
+  # A favorite is served as a last resort, but never against the filter: with
+  # the space theme alone, an anime favorite is a different picture from the one
+  # the panel promises, so it stays out and the failure is reported instead.
   for f in "${files[@]}"; do
     [[ $f == "$current" ]] && continue
     src=$(meta_get "$(basename "$f")" 2)
     id=$(meta_get "$(basename "$f")" 3)
     [[ -n $src && -n $id ]] && is_blocked "$src" "$id" && continue
+    if filter_active; then
+      theme=$(meta_get "$(basename "$f")" 7)
+      # A favorite added before its source declared its themes carries no
+      # usable theme, so the source decides which themes it belongs to.
+      if [[ -z $theme || $theme == any || $theme == null ]]; then
+        theme=$(source_themes "$src")
+      fi
+      hit=
+      for t in $theme; do
+        theme_enabled "$t" && { hit=1; break; }
+      done
+      [[ -n $hit ]] || continue
+      filtered=1
+    fi
     candidates+=("$f")
   done
-  ((${#candidates[@]} > 0)) || candidates=("${files[@]}")
+  # Nothing matched the filter: rather than break it, the caller is told there
+  # is nothing to serve. The last-resort fallback is only for an unfiltered
+  # rotation, where any favorite is a fair answer.
+  if ((${#candidates[@]} == 0)); then
+    filter_active && return 1
+    candidates=("${files[@]}")
+  fi
   n=$((RANDOM % ${#candidates[@]}))
   apply_local "${candidates[$n]}"
 }
