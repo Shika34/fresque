@@ -129,23 +129,28 @@ BarWidget {
     onExited: root.working = false
   }
 
-  // A single glyph, so a content width slot is right: BarIconButton would pin
-  // it to an icon slot and anything longer would overflow its neighbours.
+  // One glyph carries the plugin's identity, a wallpaper, and the bar's own
+  // vocabulary carries the state: the tint marks a live rotation and the
+  // dimmed state marks a transfer in progress. Swapping the mark for a cog
+  // whenever the plugin was merely working made it look like a settings
+  // widget.
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.working ? "󰒓" : (root.rotating ? "󰑖" : "󰋩")
+    text: "󰋩" // nf-md-wallpaper
+    foreground: root.rotating
+      ? Color.accent
+      : (root.bar ? root.bar.barForeground : Color.foreground)
+    dimmed: root.working
     tooltipText: root.tooltipText
     horizontalMargin: 8.75
     verticalPadding: 8.75
-    opacity: root.working ? 0.55 : 1
 
+    // Left click opens the panel, right click takes the next wallpaper.
     onPressed: function(b) {
       if (b === Qt.RightButton) root.nextWallpaper()
       else root.togglePanel()
     }
-
-    Behavior on opacity { NumberAnimation { duration: 140 } }
   }
 }
