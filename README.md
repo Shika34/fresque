@@ -151,6 +151,11 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 
 ## Development
 
+For working on the plugin itself. A checkout is not an installation step:
+`omarchy plugin add` above already places the files, and nothing is ever built,
+compiled or executed from the network at install time. Fresque is QML and shell
+run from the repository as it is.
+
 ```sh
 git clone https://github.com/Shika34/fresque.git \
   ~/.config/omarchy/plugins/io.github.shika34.fresque
