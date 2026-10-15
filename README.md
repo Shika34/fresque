@@ -100,6 +100,13 @@ fresque config set sources.noirlab false # turn a source off (bing wikimedia noi
 
 The script lives at `~/.config/omarchy/plugins/io.github.shika34.fresque/bin/fresque`.
 
+## Requirements
+
+Everything Fresque needs is already on an Omarchy install: `bash`, `curl` and
+`jq`. Measuring a picture uses `vipsheader` or `magick` when one of the two is
+present, and falls back to the size the source declares when neither is. The
+interface is QML on the Quickshell that Omarchy ships.
+
 ## What leaves the machine
 
 One HTTPS request to the chosen source when a change is due or when you ask for
