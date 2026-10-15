@@ -70,8 +70,10 @@ The panel is four rows of choices and three buttons. The intervals, the themes,
 the sources and the favorites switch all start in the state you would have
 picked anyway.
 
-The interface follows your system language. English and French are built in, and
-anything else falls back to English. Set `language` to `en` or `fr` to force one.
+The interface follows your system language. Thirteen languages are built in:
+Chinese, Hindi, Spanish, French, Arabic, Portuguese, Russian, Japanese, German,
+Italian, Korean, Turkish and English, and anything else falls back to English.
+Set `language` to one of their codes to force one.
 
 ## Command line
 
@@ -91,7 +93,7 @@ fresque touch                           # restart the rotation clock
 fresque config set rotateMinutes 60     # 0, 5, 15, 30, 60, 180, 360, 1440
 fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
-fresque config set language en          # auto, en or fr (auto follows the desktop)
+fresque config set language ja          # auto or en zh hi es fr ar pt ru ja de it ko tr
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
 fresque config set sources.esa false    # turn a source off (bing wikimedia esa konachan yandere picsum)
 ```
