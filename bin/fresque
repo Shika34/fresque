@@ -1241,11 +1241,12 @@ cmd_status() {
     --argjson staged "$(stage_count)" \
     --argjson sourcesOn "$(count_words "$(enabled_sources)")" \
     --argjson themesOn "$(count_words "$(enabled_themes)")" \
-    --arg libpath "$dir" --arg favpath "$favdir" --arg index "$INDEX_FILE" '{
+    --arg libpath "$dir" --arg favpath "$favdir" --arg index "$INDEX_FILE" --arg lang "$(cfg language)" '{
       path: ($c.path // ""),
       source: ($c.source // ""),
       id: ($c.id // ""),
       theme: ($c.theme // ""),
+      language: $lang,
       credit: ($c.credit // ""),
       link: ($c.link // ""),
       license: ($c.license // ""),
