@@ -17,7 +17,8 @@ then takes a new one every day.
 |---|---|
 | **Six sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, ESA/Hubble and ESA/Webb telescope imagery, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
-| **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all |
+| **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
+| **An instant switch** | Two wallpapers are downloaded ahead of time, so asking for the next one takes about a third of a second instead of a few seconds. One is fetched in the background as soon as you pick one, and the pool never grows past four |
 | **"Not this one"** | The picture on screen is blocked and replaced in one click. It will not come back |
 | **Favorites** | One click moves the picture on screen into `~/Pictures/Fresque/Favorites/`. Favorites are never pruned, and "Only favorites" turns the rotation into a loop over what you kept |
 | **Change automatically** | 1 day (default), 6 h, 3 h, 1 h, 30 min, 15 min, 5 min, or off |
@@ -63,7 +64,8 @@ plugin folder and it does everything the panel does.
 
 ```sh
 fresque status                          # current wallpaper, rotation, themes, sources, favorites as JSON
-fresque next                            # download and apply the next wallpaper
+fresque next                            # apply the next wallpaper (instant when one is ready)
+fresque prefetch 2                       # download the next two in advance
 fresque skip                            # block this one and take another
 fresque favorite                        # move the current wallpaper into Favorites
 fresque unfavorite                      # move it back into the library
