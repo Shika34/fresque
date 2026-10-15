@@ -15,28 +15,28 @@ then takes a new one every day.
 
 | | |
 |---|---|
-| **Four sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, Konachan's 4K anime art, and Unsplash photographs served through Picsum |
-| **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, and the file's real size is measured again after the download |
-| **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen |
+| **Six sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, ESA/Hubble and ESA/Webb telescope imagery, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
+| **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
+| **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all |
 | **"Not this one"** | The picture on screen is blocked and replaced in one click. It will not come back |
 | **Favorites** | One click moves the picture on screen into `~/Pictures/Fresque/Favorites/`. Favorites are never pruned, and "Only favorites" turns the rotation into a loop over what you kept |
 | **Change automatically** | 1 day (default), 6 h, 3 h, 1 h, 30 min, 15 min, 5 min, or off |
 | **A library with a ceiling** | `~/Pictures/Fresque/` holds the images and nothing else. It is trimmed to your limit (30 by default), oldest first, and never drops the wallpaper you are looking at. All the metadata lives in the state directory instead |
-| **Credits** | The panel shows the source, the size, the theme and the author, with a link to the original page |
+| **Credits** | The panel shows the source, the size, the theme and the author |
 
 ## Sources
 
 | Source | What it serves | Licence |
 |---|---|---|
-| Bing | The day's photograph, always, whatever themes are on | Bing, credited to its author |
-| Wikimedia Commons | Featured and quality photography, for the photographic themes | Free licence per image, shown in the panel |
-| Konachan | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
+| Bing | The day's photograph. Used only when no theme filter is set, since the picture is chosen by someone else | Bing, credited to its author |
+| Wikimedia Commons | Featured and quality photography, and featured galaxy pictures for Space | Free licence per image, shown in the panel |
+| ESA/Hubble, ESA/Webb | Telescope imagery: nebulae, galaxies, star clusters | ESA/Hubble and NASA, CC BY 4.0 |
+| Konachan, Yande.re | Anime art at 4K and beyond, for the Anime theme | Fan art, credited to its artist |
 | Unsplash via Picsum | Photographs, theme "Photos" | Unsplash License |
 
-Every request to Konachan is pinned to the safe rating and to your screen size,
-so nothing else can come back from it. Bing and Unsplash cannot be filtered by
-theme, because the one is a single daily picture and the other carries no tags.
-The panel dims a source when the themes you picked leave it nothing to serve.
+Every request to Konachan and Yande.re is pinned to the safe rating and to your
+screen size, so nothing else can come back from them. The panel dims a source
+whose themes are all switched off, so it is obvious why it stays quiet.
 
 ## Usage
 
@@ -49,9 +49,9 @@ The panel dims a source when the themes you picked leave it nothing to serve.
 | `f` while the panel is open | Add or remove the current wallpaper from favorites |
 | `Esc` | Closes the panel |
 
-The panel is four rows of choices and four buttons, all centred. The intervals,
-the themes, the sources and the favorites switch all start in the state you
-would have picked anyway.
+The panel is four rows of choices and three buttons. The intervals, the themes,
+the sources and the favorites switch all start in the state you would have
+picked anyway.
 
 The interface follows your system language. English and French are built in, and
 anything else falls back to English.
@@ -74,7 +74,7 @@ fresque config set rotateMinutes 60     # 0, 5, 15, 30, 60, 180, 360, 1440
 fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
-fresque config set sources.konachan false  # turn a source off (bing wikimedia konachan picsum)
+fresque config set sources.esa false    # turn a source off (bing wikimedia esa konachan yandere picsum)
 ```
 
 The script lives at `~/.config/omarchy/plugins/mitch.fresque/bin/fresque`.
@@ -111,7 +111,7 @@ rm -rf ~/Pictures/Fresque ~/.local/state/fresque ~/.config/omarchy/fresque.json
 
 ## What it does not do
 
-- No custom sources. The four that ship are the ones that can be used without an
+- No custom sources. The six that ship are the ones that can be used without an
   API key and without scraping a website.
 - No separate wallpaper per screen. Omarchy draws one background across every
   screen, so Fresque picks pictures that fit your largest one instead.
