@@ -122,7 +122,17 @@ var STRINGS = {
   }
 }
 
+// "auto" follows the desktop, which is what a plugin should do by default. A
+// language can be forced in the config for anyone who wants English on a French
+// desktop, or the other way round.
+var language = "auto"
+
+function setLanguage(code) {
+  language = (code === "en" || code === "fr") ? code : "auto"
+}
+
 function localeKey() {
+  if (language === "en" || language === "fr") return language
   try {
     var name = Qt.locale().name.toLowerCase()
     return name.indexOf("fr") === 0 ? "fr" : "en"

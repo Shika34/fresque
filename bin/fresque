@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=5
+CONFIG_VERSION=6
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -184,17 +184,18 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 5,
+  "version": 6,
   "rotateMinutes": 1440,
   "sources": { "bing": true, "wikimedia": true, "esa": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
   "keepLast": 30,
   "favoritesOnly": false,
+  "language": "auto",
   "expose": true,
   "library": ""
 }'
 
-CONFIG_KEYS="rotateMinutes keepLast expose favoritesOnly library sources.<id> themes.<id>"
+CONFIG_KEYS="rotateMinutes keepLast expose favoritesOnly language library sources.<id> themes.<id>"
 
 ensure_config() {
   if [[ -f $CONFIG_FILE ]]; then
@@ -239,6 +240,9 @@ cfg_set() {
     favoritesOnly)
       case $value in true|false) ;; *) die "favoritesOnly must be true or false, got: $value" ;; esac
       tmp=$(jq --argjson v "$value" '.favoritesOnly = $v' "$CONFIG_FILE") ;;
+    language)
+      case $value in auto|en|fr) ;; *) die "language must be auto, en or fr, got: $value" ;; esac
+      tmp=$(jq --arg v "$value" '.language = $v' "$CONFIG_FILE") ;;
     library)
       [[ -z $value || $value == /* ]] || die "library must be an absolute path or empty"
       tmp=$(jq --arg v "$value" '.library = $v' "$CONFIG_FILE") ;;

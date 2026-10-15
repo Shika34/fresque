@@ -1,8 +1,14 @@
 # Fresque
 
-Quality wallpapers for [Omarchy](https://omarchy.org/). You install it and there
-is a wallpaper. It changes once a day, it only ever offers pictures large enough
-for your screen, and the folder it keeps stays at a size you choose.
+**A pleasure for the eyes.** Quality wallpapers for [Omarchy](https://omarchy.org/),
+with nothing to configure: you install it, and there is a wallpaper.
+
+![The Fresque panel on a real desktop](docs/panel.jpg)
+
+It is made to be looked at. Every picture is at least as large as your screen and
+shaped like it, the author and the licence sit right there in the panel, and the
+whole thing changes on its own. It changes once a day by default, and the folder
+it keeps stays at the size you choose.
 
 ```sh
 omarchy plugin add https://github.com/mitch/fresque.git --enable
@@ -25,6 +31,14 @@ then takes a new one every day.
 | **A library with a ceiling** | `~/Pictures/Fresque/` holds the images and nothing else. It is trimmed to your limit (30 by default), oldest first, and never drops the wallpaper you are looking at. All the metadata lives in the state directory instead |
 | **Credits** | The panel shows the source, the size, the theme and the author |
 
+## What it can put on your screen
+
+![A galaxy from ESA/Hubble, a waterfall from Wikimedia Commons, an anime scene from Konachan](docs/wallpapers.jpg)
+
+Three of the six sources, three of the six themes: ESA/Hubble for Space,
+Wikimedia Commons for Nature, Konachan for Anime. Each picture keeps its author
+and its licence in the panel.
+
 ## Sources
 
 | Source | What it serves | Licence |
@@ -41,6 +55,8 @@ whose themes are all switched off, so it is obvious why it stays quiet.
 
 ## Usage
 
+![The bar pill, between the tray and the other widgets](docs/bar.jpg)
+
 | Gesture | Effect |
 |---|---|
 | Left click on the pill | Opens the panel |
@@ -55,7 +71,7 @@ the sources and the favorites switch all start in the state you would have
 picked anyway.
 
 The interface follows your system language. English and French are built in, and
-anything else falls back to English.
+anything else falls back to English. Set `language` to `en` or `fr` to force one.
 
 ## Command line
 
@@ -75,6 +91,7 @@ fresque touch                           # restart the rotation clock
 fresque config set rotateMinutes 60     # 0, 5, 15, 30, 60, 180, 360, 1440
 fresque config set keepLast 50          # how many images the library may hold
 fresque config set favoritesOnly true   # rotate over the favorites only
+fresque config set language en          # auto, en or fr (auto follows the desktop)
 fresque config set themes.space false   # turn a theme off (nature space architecture animals photos anime)
 fresque config set sources.esa false    # turn a source off (bing wikimedia esa konachan yandere picsum)
 ```

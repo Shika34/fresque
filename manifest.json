@@ -5,9 +5,9 @@
   "version": "2.0.0",
   "author": "Mitch",
   "license": "MIT",
-  "description": "Quality wallpapers with nothing to configure: four keyless sources, a theme filter, a daily change by default, and a small local library.",
-  "homepage": "https://github.com/mitch/fresque",
-  "repository": "https://github.com/mitch/fresque",
+  "description": "A pleasure for the eyes, with nothing to configure: six sources without an API key, a theme filter, a daily change, and a small local library.",
+  "homepage": "https://github.com/Shika34/fresque",
+  "repository": "https://github.com/Shika34/fresque",
   "keywords": [
     "wallpaper",
     "background",

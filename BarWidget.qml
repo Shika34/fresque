@@ -40,6 +40,7 @@ BarWidget {
 
   function applyConfig(raw) {
     config = Model.parseJson(raw, {}, 65536)
+    Model.setLanguage(config.language || "auto")
   }
 
   function applyCurrent(raw) {
