@@ -545,9 +545,16 @@ function parseJson(raw, fallback, limit) {
   }
 }
 
+// A credit is text, not a document. A Text element decides on its own how to
+// read what it is given, and rich text can carry an image whose URL a renderer
+// will happily fetch, so the markup and the control characters are removed
+// here, once, for every surface that shows a string from a source.
 function singleLine(value, max) {
   if (typeof value !== "string") return ""
-  var flat = value.replace(/\s+/g, " ").trim()
+  var flat = value.replace(/<[^>]{0,300}>/g, " ")
+  flat = flat.replace(/[<>]/g, "")
+  flat = flat.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+  flat = flat.replace(/\s+/g, " ").trim()
   var limit = max || 200
   return flat.length > limit ? flat.slice(0, limit - 1) + "..." : flat
 }
@@ -555,7 +562,8 @@ function singleLine(value, max) {
 function sourceLabel(id) {
   for (var i = 0; i < SOURCES.length; i++)
     if (SOURCES[i].id === id) return SOURCES[i].label
-  return id === "" ? "" : id
+  // An id this version does not know about is shown as it is, but never raw.
+  return id === "" ? "" : singleLine(id, 24)
 }
 
 function themeLabel(id) {

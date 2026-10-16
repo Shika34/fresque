@@ -333,6 +333,7 @@ Panel {
 
             Text {
               text: root.sourceName
+              textFormat: Text.PlainText
               color: root.contentForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.body
@@ -364,6 +365,9 @@ Panel {
           Text {
             width: parent.width
             text: root.creditText
+            // Whatever a source sent is shown as characters, never read as a
+            // document: markup in a credit cannot make the renderer fetch a URL.
+            textFormat: Text.PlainText
             visible: text !== ""
             color: root.contentForeground
             opacity: 0.6

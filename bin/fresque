@@ -747,15 +747,22 @@ fetch_candidates() {
 # metadata lives in the state directory: a folder of images stays a folder of
 # images, which is what people expect when they open it.
 
+# Anything written down about a picture goes through this: markup delimiters and
+# control characters never reach the state files, so no interface can be handed a
+# string that a renderer would read as a document. Tabs and newlines are folded
+# as well, because a tab is the column separator here.
+plain_text() {
+  printf '%s' "${1-}" | tr -d '<>' | tr -d '[:cntrl:]' | tr -s ' ' | cut -c1-300
+}
+
 meta_put() {
   local file=$1 source=$2 id=$3 credit=$4 link=$5 license=$6 theme=$7 base
   ensure_dir "$STATE_DIR"
   base=$(basename "$file")
   meta_forget "$base"
-  # Tabs and newlines inside a credit would break the row, so they are folded.
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$base" "$source" "$id" \
-    "$(printf '%s' "$credit" | tr '\t\n' '  ')" "$link" "$license" "$theme" >>"$INDEX_FILE"
+    "$(plain_text "$credit")" "$(plain_text "$link")" "$(plain_text "$license")" "$theme" >>"$INDEX_FILE"
 }
 
 meta_forget() {
@@ -904,9 +911,9 @@ write_current() {
     source: ($p.source // ""),
     id: ($p.id // ""),
     theme: ($p.theme // ""),
-    credit: ($p.credit // ""),
-    link: ($p.link // ""),
-    license: ($p.license // ""),
+    credit: (($p.credit // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
+    link: (($p.link // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
+    license: (($p.license // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
     width: ($p.width // 0),
     height: ($p.height // 0),
     appliedAt: $at,
