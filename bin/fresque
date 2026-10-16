@@ -84,6 +84,18 @@ now_ms() { date +%s%3N; }
 # Number of words in a list, used for the counts the panel reads back.
 count_words() { local n=0 w; for w in $1; do n=$((n + 1)); done; printf '%s' "$n"; }
 
+# Every number that comes from outside: a source's JSON, a header probe, the
+# compositor, or a settings file someone edited by hand. `(( w >= 0 ))` does not
+# read the value of w, it evaluates it, so a dimension shaped like an array
+# subscript would have bash run the command substitution inside it. Only digits
+# survive, and a value that holds no digit at all is refused.
+dimension() {
+  local value=${1-}
+  value=${value//[!0-9]/}
+  [[ -n $value && ${#value} -le 9 ]] || return 1
+  printf '%s' "$value"
+}
+
 # ---------------------------------------------------------------- files
 
 # Refuses to write into anything that is not a plain directory owned by the
@@ -468,6 +480,7 @@ screen_geometry() {
 # loses its subject, so neither counts as a wallpaper worth serving here.
 aspect_ok() {
   local w=$1 h=$2
+  [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || return 1
   awk -v a="$w" -v b="$h" 'BEGIN { if (b <= 0) exit 1; r = a / b; exit !(r >= 1.2 && r <= 2.7) }'
 }
 
@@ -520,8 +533,8 @@ candidates_wikimedia() {
           full: ($ii.thumburl // $ii.url),
           alt: ($ii.url // ""),
           thumb: ($ii.thumburl // $ii.url),
-          width: ($ii.width // 0),
-          height: ($ii.height // 0),
+          width: (($ii.width // 0) | try tonumber catch 0),
+          height: (($ii.height // 0) | try tonumber catch 0),
           credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
           link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
           license: ($ii.extmetadata.LicenseShortName.value // "Free license")
@@ -557,8 +570,8 @@ candidates_booru() {
       full: (.jpeg_url // .file_url),
       alt: (.file_url // ""),
       thumb: (.preview_url // .sample_url),
-      width: (.width // 0),
-      height: (.height // 0),
+      width: ((.width // 0) | try tonumber catch 0 | if . < 0 then 0 else . end),
+      height: ((.height // 0) | try tonumber catch 0 | if . < 0 then 0 else . end),
       credit: (if (.author // "") == "tagme" then "" else (.author // "") end),
       link: ("https://" + $host + "/post/show/" + (.id | tostring)),
       license: "Fan art, credited to its artist"
@@ -616,15 +629,14 @@ candidates_noirlab() {
       [[ -n $row ]] || continue
       full=$(jq -r '.full' <<<"$row")
       dims=$(remote_probe "$full") || continue
-      w=$(printf '%s' "$dims" | cut -d' ' -f1)
-      h=$(printf '%s' "$dims" | cut -d' ' -f2)
-      size=$(printf '%s' "$dims" | cut -d' ' -f3)
-      [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
+      w=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f1)") || continue
+      h=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f2)") || continue
+      size=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f3)") || size=0
       ((w >= min_w && h >= min_h)) || continue
       aspect_ok "$w" "$h" || continue
       # A stitched panorama can be 140 MB and there is no point downloading one
       # wallpaper rotation.
-      [[ $size =~ ^[0-9]+$ ]] && ((size > 8000000)) && continue
+      ((size > 8000000)) && continue
       row=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$row")
       kept=$(jq -c --argjson r "$row" '. + [$r]' <<<"$kept")
     done
@@ -653,9 +665,8 @@ candidates_omarchy() {
     while IFS= read -r f; do
       [[ -f $f ]] || continue
       dims=$(image_dimensions "$f") || continue
-      w=$(printf '%s' "$dims" | cut -d' ' -f1)
-      h=$(printf '%s' "$dims" | cut -d' ' -f2)
-      [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
+      w=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f1)") || continue
+      h=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f2)") || continue
       ((w >= min_w && h >= min_h)) || continue
       aspect_ok "$w" "$h" || continue
       id="$(printf '%s' "$label")-$(basename "$f" | sed 's/\.[a-zA-Z]*$//')"
@@ -691,6 +702,9 @@ candidates_picsum() {
 
 fetch_candidates() {
   local src=$1 theme=$2 min_w=$3 min_h=$4 rows row w h out="[]"
+  # Whatever asked for a size, only digits reach the comparisons below.
+  min_w=$(dimension "$min_w") || min_w=1920
+  min_h=$(dimension "$min_h") || min_h=1080
   case $src in
     bing)      rows=$(candidates_bing) ;;
     wikimedia) rows=$(candidates_wikimedia "$theme" "$min_w" "$min_h") ;;
@@ -706,7 +720,11 @@ fetch_candidates() {
   local block pat
   block=$(theme_block "$theme")
   while IFS= read -r row; do
-    w=$(jq -r '.width // 0' <<<"$row"); h=$(jq -r '.height // 0' <<<"$row")
+    w=$(dimension "$(jq -r '.width // 0' <<<"$row")") || w=0
+    h=$(dimension "$(jq -r '.height // 0' <<<"$row")") || h=0
+    # The row is rebuilt from those two numbers, so nothing a source sent can
+    # travel on inside the candidate and reach an arithmetic context later.
+    row=$(jq -c --argjson w "$w" --argjson h "$h" '.width = $w | .height = $h' <<<"$row") || continue
     if [[ $w == "0" || $h == "0" ]]; then
       out=$(jq -c --argjson r "$row" '. + [$r]' <<<"$out")
       continue
@@ -929,8 +947,8 @@ fetch_photo() {
   if [[ -n $local_path ]]; then
     [[ -f $local_path ]] || return 1
     dims=$(image_dimensions "$local_path") || return 1
-    w=$(printf '%s' "$dims" | cut -d' ' -f1); h=$(printf '%s' "$dims" | cut -d' ' -f2)
-    [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || return 1
+    w=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f1)") || return 1
+    h=$(dimension "$(printf '%s' "$dims" | cut -d' ' -f2)") || return 1
     ((w >= min_w && h >= min_h)) && aspect_ok "$w" "$h" || return 1
     meta_put "$local_path" "$src" "$id" "$(jq -r '.credit // ""' <<<"$photo")" \
       "$(jq -r '.link // ""' <<<"$photo")" "$(jq -r '.license // ""' <<<"$photo")" "$theme"
@@ -968,7 +986,8 @@ fetch_photo() {
       # retried instead of thrown away.
       dims=$(image_dimensions "$tmp")
       if [[ -n $dims ]]; then
-        w=${dims% *}; h=${dims##* }
+        w=$(dimension "${dims% *}") || w=0
+        h=$(dimension "${dims##* }") || h=0
         if ((w < min_w || h < min_h)) || ! aspect_ok "$w" "$h"; then
           rm -f "$tmp"
           continue
@@ -1106,7 +1125,9 @@ cmd_next() {
     die "no favorite is available yet"
   fi
 
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
+  wh=$(screen_geometry)
+  min_w=$(dimension "${wh% *}") || min_w=1920
+  min_h=$(dimension "${wh##* }") || min_h=1080
 
   # A wallpaper fetched in advance is already on disk, so putting it on screen
   # costs nothing. The pool is refilled behind the scenes afterwards.
@@ -1163,7 +1184,9 @@ cmd_prefetch() {
   [[ $(cfg favoritesOnly) == "true" ]] && return 0
   [[ -n $(enabled_sources) ]] || return 0
 
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
+  wh=$(screen_geometry)
+  min_w=$(dimension "${wh% *}") || min_w=1920
+  min_h=$(dimension "${wh##* }") || min_h=1080
   while (($(stage_count) < want)) && ((attempts < 4)); do
     attempts=$((attempts + 1))
     src=$(pick_source) || break
@@ -1237,7 +1260,9 @@ apply_local() {
     '{source: $s, id: $i, theme: $t, credit: $c, link: $l, license: $lic, width: 0, height: 0}')
   dims=$(image_dimensions "$path")
   if [[ -n $dims ]]; then
-    entry=$(jq -c --argjson w "${dims% *}" --argjson h "${dims##* }" '.width = $w | .height = $h' <<<"$entry")
+    local dw dh
+    dw=$(dimension "${dims% *}") && dh=$(dimension "${dims##* }") &&
+      entry=$(jq -c --argjson w "$dw" --argjson h "$dh" '.width = $w | .height = $h' <<<"$entry")
   fi
   set_background "$path"
   expose_in_theme "$path"
@@ -1411,7 +1436,9 @@ cmd_status() {
 cmd_verify() {
   ensure_config
   local wh min_w min_h src t n ok=0
-  wh=$(screen_geometry); min_w=${wh% *}; min_h=${wh##* }
+  wh=$(screen_geometry)
+  min_w=$(dimension "${wh% *}") || min_w=1920
+  min_h=$(dimension "${wh##* }") || min_h=1080
   for src in $SOURCE_IDS; do
     for t in $(source_themes "$src"); do
       n=$(fetch_candidates "$src" "$t" "$min_w" "$min_h" 2>/dev/null | jq 'length' 2>/dev/null)
