@@ -23,6 +23,7 @@ then takes a new one every day.
 |---|---|
 | **Seven sources, no API key** | Bing's picture of the day, Wikimedia Commons featured and quality photography, NOIRLab's image of the week for the night sky, the wallpapers Omarchy itself ships, Konachan and Yande.re anime art, and Unsplash photographs served through Picsum |
 | **Wallpapers, not random images** | Every candidate has to be at least as large as your largest screen, and shaped like a widescreen desktop. Portrait shots and long panoramas are dropped before anything is downloaded, the file's real size is measured again after the download, and obvious non-photographs (museum specimens, murals, maps, diagrams) are filtered out by keyword |
+| **Nothing you would not want decoded** | A picture is kept at twice your screen at most, never above 50 megapixels or 12000 pixels on a side, and it is re-encoded on the way in. The shell only ever opens a plain JPEG this plugin wrote, so the metadata a file can carry, the canvas it can claim and the colours it can declare stay in the short lived tool that read it |
 | **A theme filter** | Nature, Space, Architecture, Animals, Photos, Anime. A theme that is off is never queried, so nothing from it can reach your screen, and a source that cannot serve the chosen themes is not queried at all. Switching every theme off means nothing is filtered, rather than nothing is allowed |
 | **An instant switch** | Two wallpapers are downloaded ahead of time, so asking for the next one takes about a third of a second instead of a few seconds. One is fetched in the background as soon as you pick one, and the pool never grows past four |
 | **"Not this one"** | The picture on screen is blocked and replaced in one click. It will not come back |
@@ -102,6 +103,16 @@ fresque config set sources.noirlab false # turn a source off (bing wikimedia noi
 ```
 
 The script lives at `~/.config/omarchy/plugins/io.github.shika34.fresque/bin/fresque`.
+
+### What a picture is allowed to be
+
+The download limits say nothing about what a file costs once it is decoded. A PNG
+of forty kilobytes can describe a canvas of several gigabytes, or carry forty
+megabytes of compressed text that a renderer inflates before it scales anything.
+So nothing a source served is handed to the shell: each picture is read, stripped,
+resized to twice the screen at most and written back as a JPEG, in a short lived
+tool with its own memory ceiling. What the panel and Omarchy's background picker
+open is a file this plugin produced.
 
 ## Requirements
 
