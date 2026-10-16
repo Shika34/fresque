@@ -912,10 +912,10 @@ write_current() {
     source: ($p.source // ""),
     id: ($p.id // ""),
     theme: ($p.theme // ""),
-    credit: ((($p.credit // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")
+    credit: ((($p.credit // "") | gsub("[<>]"; "") | gsub("[\u0000-\u001f\u007f]"; " ")
               | gsub("\\s+"; " ") | sub("^ +"; "") | sub(" +$"; ""))),
-    link: (($p.link // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
-    license: (($p.license // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
+    link: (($p.link // "") | gsub("[<>]"; "") | gsub("[\u0000-\u001f\u007f]"; " ")),
+    license: (($p.license // "") | gsub("[<>]"; "") | gsub("[\u0000-\u001f\u007f]"; " ")),
     width: ($p.width // 0),
     height: ($p.height // 0),
     appliedAt: $at,

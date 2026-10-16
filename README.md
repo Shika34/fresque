@@ -33,11 +33,11 @@ then takes a new one every day.
 
 ## What it can put on your screen
 
-![The Milky Way over Gemini South, a hermit crab in Madagascar, an anime scene from Konachan](docs/wallpapers.jpg)
+![An autumn waterfall in West Virginia, a lava cave in the Azores, an anime scene from Konachan](docs/wallpapers.jpg)
 
-Three of the seven sources, three of the six themes: NOIRLab for Space,
-Wikimedia Commons for Nature, Konachan for Anime. Each picture keeps its author
-and its licence in the panel.
+Three pictures kept in the favorites, from three of the seven sources: Bing's
+photograph of the day, Wikimedia Commons, and Konachan. Each one keeps its
+author and its licence in the panel.
 
 ## Sources
 
