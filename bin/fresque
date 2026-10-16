@@ -752,7 +752,8 @@ fetch_candidates() {
 # string that a renderer would read as a document. Tabs and newlines are folded
 # as well, because a tab is the column separator here.
 plain_text() {
-  printf '%s' "${1-}" | tr -d '<>' | tr -d '[:cntrl:]' | tr -s ' ' | cut -c1-300
+  printf '%s' "${1-}" | tr -d '<>' | tr -d '[:cntrl:]' | tr -s ' ' |
+    sed -e 's/^ *//' -e 's/ *$//' | cut -c1-300
 }
 
 meta_put() {
@@ -911,7 +912,8 @@ write_current() {
     source: ($p.source // ""),
     id: ($p.id // ""),
     theme: ($p.theme // ""),
-    credit: (($p.credit // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
+    credit: ((($p.credit // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")
+              | gsub("\\s+"; " ") | sub("^ +"; "") | sub(" +$"; ""))),
     link: (($p.link // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
     license: (($p.license // "") | gsub("[<>]"; "") | gsub("[\\u0000-\\u001f\\u007f]"; " ")),
     width: ($p.width // 0),
