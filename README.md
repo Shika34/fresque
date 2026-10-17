@@ -112,7 +112,10 @@ megabytes of compressed text that a renderer inflates before it scales anything.
 So nothing a source served is handed to the shell: each picture is read, stripped,
 resized to twice the screen at most and written back as a JPEG, in a short lived
 tool with its own memory ceiling. What the panel and Omarchy's background picker
-open is a file this plugin produced.
+open is a file this plugin produced. The same rule covers what an earlier version
+left behind: a picture in the library, in the favorites, or in the pool prepared
+ahead of time is rewritten the first time it is used, and a settings schema
+change drops the pool rather than trust it.
 
 ## Requirements
 

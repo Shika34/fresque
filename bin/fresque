@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=8
+CONFIG_VERSION=9
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -206,7 +206,7 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 8,
+  "version": 9,
   "rotateMinutes": 1440,
   "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
@@ -239,6 +239,10 @@ ensure_config() {
     if [[ -n $merged ]]; then
       printf '%s\n' "$merged" >"$CONFIG_FILE" || die "cannot write $CONFIG_FILE"
       echo "fresque: config migrated from schema v$version to v$CONFIG_VERSION (previous copy at $CONFIG_FILE.bak)" >&2
+      # The pool was prepared by the version that wrote it, on its own terms.
+      # Entries from before the pictures were normalised point at originals, so
+      # the list is dropped and rebuilt by this version instead.
+      if [[ $version -lt 9 ]]; then : >"$STAGED_FILE" 2>/dev/null || true; fi
       return 0
     fi
     echo "fresque: config was schema v$version, replaced with v$CONFIG_VERSION" >&2
@@ -1342,8 +1346,70 @@ cmd_next_favorite() {
 
 # Puts a picture that is already on disk on screen. Credits come from the index
 # when the row is there, so a favorite keeps its author and licence.
+# One picture, made fit for the shell: a JPEG, at most twice the screen, nothing
+# but pixels. A file can arrive here from the pool or from the favorites with a
+# shape an older version accepted, PNG text chunks and all, and the shell is
+# about to decode it. Those are rewritten on the spot, once. A wallpaper that
+# belongs to the system is applied where it lies, as it always was.
+ensure_shaped() {
+  local path=$1 dims w h needs=0 wh minw minh cap_w cap_h base clean fav lib
+  lib=$(library_dir); fav=$(favorites_dir)
+  [[ -f $path ]] || return 1
+  [[ $path == "$lib"/* || $path == "$fav"/* ]] || { printf '%s' "$path"; return 0; }
+
+  dims=$(image_dimensions "$path" 2>/dev/null) || dims=
+  if [[ -n $dims ]]; then
+    w=$(dimension "${dims% *}") || w=0
+    h=$(dimension "${dims##* }") || h=0
+  else
+    w=0; h=0
+  fi
+  case ${path,,} in *.jpg|*.jpeg) ;; *) needs=1 ;; esac
+  ((w > 0 && h > 0)) || needs=1
+  if ((w > 0 && h > 0)) && ! pixels_ok "$w" "$h"; then needs=1; fi
+  if ((needs == 0)); then printf '%s' "$path"; return 0; fi
+
+  wh=$(screen_geometry)
+  minw=$(dimension "${wh% *}") || minw=1920
+  minh=$(dimension "${wh##* }") || minh=1080
+  cap_w=$((minw * KEEP_SCALE)); cap_h=$((minh * KEEP_SCALE))
+  ((cap_w > MAX_SIDE)) && cap_w=$MAX_SIDE
+  ((cap_h > MAX_SIDE)) && cap_h=$MAX_SIDE
+
+  base=$(basename "$path"); base=${base%.*}
+  clean="$lib/$base.jpg"
+  ensure_dir "$lib"
+  if [[ $clean == "$path" ]]; then
+    # The name is already the one we would write: do it beside it, then swap.
+    clean="$lib/.$base.$$.jpg"
+    normalise_image "$path" "$clean" "$cap_w" "$cap_h" || { rm -f "$clean"; return 1; }
+    mv -f "$clean" "$path"
+    printf '%s' "$path"
+    return 0
+  fi
+  normalise_image "$path" "$clean" "$cap_w" "$cap_h" || return 1
+
+  # The credits follow the picture under its new name, then the original goes:
+  # a favorite keeps a link to the rewritten file, a library copy is dropped.
+  meta_put "$clean" "$(meta_get "$(basename "$path")" 2)" "$(meta_get "$(basename "$path")" 3)" \
+    "$(meta_get "$(basename "$path")" 4)" "$(meta_get "$(basename "$path")" 5)" \
+    "$(meta_get "$(basename "$path")" 6)" "$(meta_get "$(basename "$path")" 7)"
+  chmod 644 "$clean" 2>/dev/null || true
+  if [[ $path == "$fav"/* ]]; then
+    rm -f "$path"
+    ln "$clean" "$fav/$(basename "$clean")" 2>/dev/null || cp -f "$clean" "$fav/$(basename "$clean")" 2>/dev/null || true
+  else
+    meta_forget "$(basename "$path")"
+    rm -f "$path"
+  fi
+  printf '%s' "$clean"
+}
+
 apply_local() {
   local path=$1 base entry dims
+  [[ -f $path ]] || return 1
+  # Whatever is about to be applied goes through the same door as a download.
+  path=$(ensure_shaped "$path") || return 1
   [[ -f $path ]] || return 1
   base=$(basename "$path")
   entry=$(jq -cn --arg s "$(meta_get "$base" 2)" --arg i "$(meta_get "$base" 3)" \
