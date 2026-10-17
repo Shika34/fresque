@@ -1469,6 +1469,9 @@ cmd_unfavorite() {
       # state file follow it. Its timestamp is refreshed so the pruning that
       # runs next treats it as a new arrival rather than the oldest file.
       touch "$dest"
+      # A favorite can predate the day pictures were normalised: it is shaped
+      # here too, since it is about to be put on screen.
+      dest=$(ensure_shaped "$dest") || die "cannot use $dest"
       set_background "$dest"
       write_current "$(jq -c '{source,id,theme,credit,link,license,width,height}' <<<"$(cur_json)")" "$dest"
       cmd_prune "$(cfg keepLast)" "$dir"
