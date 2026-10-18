@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.shika34.fresque",
   "name": "Fresque",
-  "version": "2.3.5",
+  "version": "2.3.6",
   "author": "Shika34",
   "license": "MIT",
   "description": "A pleasure for the eyes, with nothing to configure: seven sources without an API key, a theme filter, an instant switch, and a small local library.",

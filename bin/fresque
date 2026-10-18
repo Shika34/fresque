@@ -18,7 +18,7 @@ INDEX_FILE="$STATE_DIR/library.tsv"
 BLOCKED_FILE="$STATE_DIR/blocked.tsv"
 STAGED_FILE="$STATE_DIR/staged.tsv"
 
-CONFIG_VERSION=9
+CONFIG_VERSION=10
 FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
@@ -206,7 +206,7 @@ verify_image() {
 # ---------------------------------------------------------------- config
 
 DEFAULT_CONFIG='{
-  "version": 9,
+  "version": 10,
   "rotateMinutes": 1440,
   "sources": { "bing": true, "wikimedia": true, "noirlab": true, "omarchy": true, "konachan": true, "yandere": true, "picsum": true },
   "themes": { "nature": true, "space": true, "architecture": true, "animals": true, "photos": true, "anime": true },
@@ -243,6 +243,9 @@ ensure_config() {
       # Entries from before the pictures were normalised point at originals, so
       # the list is dropped and rebuilt by this version instead.
       if [[ $version -lt 9 ]]; then : >"$STAGED_FILE" 2>/dev/null || true; fi
+      # The picture on screen survived the upgrade too, and the state file names
+      # its file: it is brought in line before any interface reads it.
+      if [[ $version -lt 10 ]]; then shape_current_wallpaper || true; fi
       return 0
     fi
     echo "fresque: config was schema v$version, replaced with v$CONFIG_VERSION" >&2
@@ -1405,6 +1408,24 @@ ensure_shaped() {
   printf '%s' "$clean"
 }
 
+# The picture on screen outlives an upgrade, and the state file names its file.
+# If that file is an original this plugin wrote before it normalised anything,
+# the panel and the shell open it as soon as they read the state, so it is
+# rewritten here, and the state, the link and the theme folder follow it.
+shape_current_wallpaper() {
+  local cur path shaped
+  cur=$(cur_json 2>/dev/null) || return 0
+  path=$(jq -r '.path // ""' <<<"$cur" 2>/dev/null)
+  [[ -n $path && -f $path ]] || return 0
+  # Nothing happens when the file is already in shape, which is the normal case.
+  shaped=$(ensure_shaped "$path" 2>/dev/null) || return 0
+  [[ -n $shaped && -f $shaped ]] || return 0
+  [[ $shaped == "$path" ]] && return 0
+  apply_local "$shaped" >/dev/null 2>&1 || return 1
+  echo "fresque: the picture on screen was an original, rewritten at $shaped" >&2
+  return 0
+}
+
 apply_local() {
   local path=$1 base entry dims
   [[ -f $path ]] || return 1
@@ -1488,6 +1509,8 @@ cmd_init() {
     cmd_next
     return $?
   fi
+  # A state file that outlived an upgrade can still name an original.
+  shape_current_wallpaper
   return 0
 }
 
