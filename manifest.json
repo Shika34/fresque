@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.shika34.fresque",
   "name": "Fresque",
-  "version": "2.3.6",
+  "version": "2.3.7",
   "author": "Shika34",
   "license": "MIT",
-  "description": "A pleasure for the eyes, with nothing to configure: seven sources without an API key, a theme filter, an instant switch, and a small local library.",
+  "description": "A wallpaper for your Omarchy desktop, at least as large as your screen and changing on its own: seven sources without an API key, a theme filter, favorites, and a small local library. Nothing to configure.",
   "homepage": "https://github.com/Shika34/fresque",
   "repository": "https://github.com/Shika34/fresque",
   "keywords": [
@@ -26,7 +26,7 @@
   },
   "barWidget": {
     "displayName": "Fresque",
-    "description": "Wallpaper of the day, themes and sources",
+    "description": "Wallpapers with a theme filter and favorites",
     "category": "Appearance",
     "allowMultiple": false,
     "defaultSection": "right"
