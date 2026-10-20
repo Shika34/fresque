@@ -44,7 +44,7 @@ author and its licence in the panel.
 
 | Source | What it serves | Licence |
 |---|---|---|
-| Bing | The day's photograph, served with the Photos theme. Nothing else is claimed about it, since the picture is chosen by someone else | Bing, credited to its author |
+| Bing | The day's photograph, served with the Photos theme. Nothing else is claimed about it, since the picture is chosen by someone else. Bing offers eight days and adds one a day, so each photograph is served once and never comes back | Bing, credited to its author |
 | Wikimedia Commons | Featured and quality photography, and featured galaxy pictures for Space | Free licence per image, shown in the panel |
 | NOIRLab | The image of the week: the Milky Way over an observatory, a comet, an eclipse, the odd galaxy | NOIRLab/NSF/AURA, CC BY 4.0 |
 | Omarchy | The wallpapers shipped with your Omarchy themes, plus the ones in your own theme folders. Already on the disk, so nothing is downloaded and nothing is copied: the picture is put on screen where it lies, and "Not this one" blocks it without deleting it | Shipped with Omarchy |

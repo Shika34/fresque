@@ -23,8 +23,11 @@ FILE_PREFIX="fresque-"
 # Delay after a failed attempt, in milliseconds: an offline laptop should retry
 # in minutes, not after a whole rotation interval.
 RETRY_MS=300000
-# Ids remembered so a rotation never serves the same picture twice.
-SEEN_KEEP=400
+# Ids remembered so a rotation never serves the same picture twice. A source with
+# a small pool needs its ids to outlive a day of rotation: Bing offers eight
+# pictures and adds one a day, so 400 entries were forgotten long before the
+# photograph left the offer.
+SEEN_KEEP=2000
 # How many wallpapers are kept ready on disk. Applying one of those is instant,
 # which is what makes asking for the next wallpaper feel immediate.
 STAGE_MAX=4
@@ -354,7 +357,7 @@ CATALOG='{
 }'
 
 SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum"
-SOURCE_WEIGHTS="bing=15 wikimedia=30 noirlab=18 omarchy=10 konachan=15 yandere=12 picsum=10"
+SOURCE_WEIGHTS="bing=8 wikimedia=30 noirlab=18 omarchy=10 konachan=15 yandere=12 picsum=10"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -537,8 +540,13 @@ aspect_ok() {
 # Bing publishes the same picture at several sizes. UHD is 3840x2160 and is only
 # generated for recent images, so the 1080p variant travels along as the
 # fallback and the size gate rejects it when the screen is bigger.
+# Bing publishes one photograph a day and only the last eight stay on offer, so
+# this pool never grows the way the others do. An entry already served is the
+# same photograph coming back, which is what it looked like. Only the ones never
+# shown are offered, and nothing at all once all eight have been seen.
 candidates_bing() {
-  curl_json "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US" |
+  local rows
+  rows=$(curl_json "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US" |
     jq -c '[.images[]? | {
       source: "bing",
       id: (.startdate // .enddate),
@@ -551,7 +559,9 @@ candidates_bing() {
       credit: ((.title // "") + ", " + (.copyright // "")),
       link: "https://www.bing.com",
       license: "Bing, credited to its author"
-    }]'
+    }]')
+  [[ -n $rows && $rows != "null" ]] || { printf '[]'; return 0; }
+  collect_unseen "$rows"
 }
 
 # Wikimedia Commons is where the best freely licensed photography lives. The
@@ -928,12 +938,10 @@ choose_candidate() {
   fresh=$(jq -c '[.[] | select(.full != "" and .id != "")]' <<<"$rows" 2>/dev/null)
   [[ $(jq 'length' <<<"${fresh:-[]}" 2>/dev/null) -gt 0 ]] || return 1
 
+  # Everything in this pool has been seen already. Serving it again is how the
+  # same photograph came back; another source will do better, and the caller
+  # moves on to one.
   unseen=$(collect_unseen "$fresh")
-  if [[ $(jq 'length' <<<"$unseen" 2>/dev/null) -eq 0 ]]; then
-    # Everything has been seen before. Rather than failing, take the whole
-    # pool again with the blocked entries still removed.
-    unseen=$(collect_unseen "$fresh" 1)
-  fi
   [[ $(jq 'length' <<<"$unseen" 2>/dev/null) -gt 0 ]] || return 1
   jq -c --argjson n "$(jq 'length' <<<"$unseen")" '.[ (now * 1000 | floor) % $n ]' <<<"$unseen"
 }
