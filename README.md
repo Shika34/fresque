@@ -129,7 +129,10 @@ interface is QML on the Quickshell that Omarchy ships.
 ## What leaves the machine
 
 One HTTPS request to the chosen source when a change is due or when you ask for
-the next wallpaper, then one more for the image itself. The Omarchy source asks
+the next wallpaper, then one more for the image itself. Every reply is cut at a
+byte ceiling rather than trusted to announce its own size, so a host that ignores
+a range request, or promises a small file and streams a large one, stops at the
+ceiling instead of filling the disk until the timeout. The Omarchy source asks
 for nothing at all: it reads the wallpapers already installed on the machine. No account, no API key,
 no telemetry, nothing sent anywhere else. Each source is queried through its
 public API and the images are the ones the site already serves to the public.

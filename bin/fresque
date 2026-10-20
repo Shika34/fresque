@@ -59,16 +59,26 @@ USER_AGENT="fresque/2.0 (Omarchy wallpaper plugin, +https://github.com/Shika34/f
 
 # HTTPS is required for the request and for every redirect, so a source or a
 # compromised CDN cannot downgrade a fetch to plain HTTP.
+#
+# Every reply is also cut at a byte ceiling. --max-filesize only refuses what the
+# server *announces*, and a server is free to announce nothing, ignore a range
+# request and keep streaming: the timeout would then be the only limit, and the
+# limit would be measured in seconds of bandwidth on the user's disk. head closes
+# the pipe at the ceiling, which stops the transfer with it.
 curl_json() {
   curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_JSON_BYTES" \
     --connect-timeout 10 --max-time 25 --silent --show-error --location --fail \
-    -A "$USER_AGENT" -H 'Accept: application/json' "$1"
+    -A "$USER_AGENT" -H 'Accept: application/json' "$1" |
+    head -c "$((MAX_JSON_BYTES + 1))"
 }
 
+# The file is written through the same ceiling, one byte above it, so a file
+# that reached the end can be told apart from one that ended on its own.
 curl_file() {
   curl --proto '=https' --proto-redir '=https' --max-filesize "$MAX_IMAGE_BYTES" \
     --connect-timeout 15 --max-time 180 --silent --show-error --location --fail \
-    -A "$USER_AGENT" -o "$2" "$1"
+    -A "$USER_AGENT" "$1" |
+    head -c "$((MAX_IMAGE_BYTES + 1))" >"$2"
 }
 
 urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
@@ -78,13 +88,20 @@ urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
 # carries the total length, so one cheap request answers both "is it wallpaper
 # shaped" and "is it a reasonable download".
 remote_probe() {
-  local tmp dims total
+  local tmp hdr dims total
   tmp="$STATE_DIR/probe.$$" || return 1
-  total=$(curl --proto '=https' --proto-redir '=https' --silent --show-error --location \
-    --fail --connect-timeout 8 --max-time 20 --range 0-65535 --dump-header - --output "$tmp" "$1" 2>/dev/null |
-    awk -F'/' 'tolower($1) ~ /content-range/ { gsub(/[^0-9]/, "", $2); v = $2 } END { print v }')
+  hdr="$STATE_DIR/probe-hdr.$$" || { rm -f "$tmp"; return 1; }
+  # The body goes through a pipe so that a server which ignores the range is cut
+  # at 64 KB instead of filling the state directory until the timeout. The
+  # headers go to their own file, which is bounded by the same timeout.
+  curl --proto '=https' --proto-redir '=https' --silent --show-error --location \
+    --fail --connect-timeout 8 --max-time 20 --range 0-65535 \
+    --dump-header "$hdr" -A "$USER_AGENT" "$1" 2>/dev/null |
+    head -c 65536 >"$tmp"
+  total=$(awk -F'/' 'tolower($1) ~ /content-range/ { gsub(/[^0-9]/, "", $2); v = $2 } END { print v }' "$hdr" 2>/dev/null)
+  dims=""
   if [[ -s $tmp ]]; then dims=$(image_dimensions "$tmp"); fi
-  rm -f "$tmp"
+  rm -f "$tmp" "$hdr"
   [[ -n $dims ]] || return 1
   printf '%s %s' "$dims" "${total:-0}"
 }
@@ -1053,6 +1070,13 @@ fetch_photo() {
       case $url in https://*) ;; *) continue ;; esac
       tmp=$(mktemp "$dir/.$FILE_PREFIX$src-$slug.XXXXXX") || return 1
       if ! curl_file "$url" "$tmp" || ! verify_image "$tmp"; then
+        rm -f "$tmp"
+        continue
+      fi
+      # The pipe stops at one byte above the ceiling: a file that got that far
+      # came from a server that kept going, and it is thrown away rather than
+      # decoded.
+      if (( $(stat -c %s "$tmp" 2>/dev/null || echo 0) > MAX_IMAGE_BYTES )); then
         rm -f "$tmp"
         continue
       fi
