@@ -27,7 +27,7 @@ RETRY_MS=300000
 # a small pool needs its ids to outlive a day of rotation: Bing offers eight
 # pictures and adds one a day, so 400 entries were forgotten long before the
 # photograph left the offer.
-SEEN_KEEP=2000
+SEEN_KEEP=4000
 # How many wallpapers are kept ready on disk. Applying one of those is instant,
 # which is what makes asking for the next wallpaper feel immediate.
 STAGE_MAX=4
@@ -357,7 +357,12 @@ CATALOG='{
 }'
 
 SOURCE_IDS="bing wikimedia noirlab omarchy konachan yandere picsum"
-SOURCE_WEIGHTS="bing=8 wikimedia=30 noirlab=18 omarchy=10 konachan=15 yandere=12 picsum=10"
+# A weight is how often a source is asked, and it should follow what the source
+# can add. A feed that publishes one picture a week (NOIRLab has 24 in all) is
+# spent in a few days at a high weight, and then silent for a week, which reads
+# as either a repeat or a disappearance. The sources with thousands of pictures
+# carry the rotation.
+SOURCE_WEIGHTS="bing=4 wikimedia=30 noirlab=5 omarchy=8 konachan=15 yandere=12 picsum=10"
 
 is_source() { [[ " $SOURCE_IDS " == *" $1 "* ]]; }
 
@@ -678,7 +683,7 @@ candidates_noirlab() {
     # and settles both the shape and the weight, so nothing huge is downloaded
     # only to be refused.
     kept="[]"
-    for row in $(jq -r '.[] | @base64' <<<"$item" | shuf -n 10); do
+    for row in $(jq -r '.[] | @base64' <<<"$item" | shuf -n 12); do
       row=$(printf '%s' "$row" | base64 -d 2>/dev/null)
       [[ -n $row ]] || continue
       full=$(jq -r '.full' <<<"$row")
