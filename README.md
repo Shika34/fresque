@@ -113,8 +113,10 @@ megabytes of compressed text that a renderer inflates before it scales anything.
 So nothing a source served is handed to the shell: each picture is read, stripped,
 resized to twice the screen at most and written back as a JPEG, in a short lived
 tool with its own memory ceiling. What the panel and Omarchy's background picker
-open is a file this plugin produced. The same rule covers what an earlier version
-left behind: a picture in the library, in the favorites, or in the pool prepared
+open is a file this plugin produced. The panel refuses to draw a picture the
+engine has not shaped, so a state file left by an older version shows an empty
+preview for the second it takes to rewrite it, never the original. The same rule
+covers what an earlier version left behind: a picture in the library, in the favorites, or in the pool prepared
 ahead of time is rewritten the first time it is used, a settings schema change
 drops the pool rather than trust it, and the picture already on screen during an
 upgrade is rewritten at that moment, with the state file and the background link

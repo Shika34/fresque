@@ -58,8 +58,20 @@ Item {
     reschedule()
   }
 
+  // A state file that names a picture without the shaping flag was written by a
+  // version that did not shape what it served. The picture is rewritten here, by
+  // the engine, before any interface decides to open it.
+  property bool shaping: false
+  function shapeState() {
+    if (shaping || bootstrapProcess.running) return
+    shaping = true
+    bootstrapProcess.command = [root.cliPath, "init"]
+    bootstrapProcess.running = true
+  }
+
   function applyState(raw) {
     var state = Model.parseJson(raw, {}, 262144)
+    if (state.path && state.shaped !== true) root.shapeState()
     var at = Number(state.appliedAt)
     var retry = Number(state.retryAt)
     appliedAt = isFinite(at) && at > 0 ? at : 0
@@ -153,6 +165,7 @@ Item {
     command: []
     stdout: StdioCollector { waitForEnd: true }
     onExited: {
+      root.shaping = false
       root.freshInstall = false
       // The CLI just wrote both files; reading them again is what arms the
       // timer for the first real interval.

@@ -979,7 +979,10 @@ write_current() {
     width: ($p.width // 0),
     height: ($p.height // 0),
     appliedAt: $at,
-    retryAt: 0
+    retryAt: 0,
+    # Only this function writes an entry for a picture that has just been shaped
+    # or produced, and the interfaces read this flag before opening the file.
+    shaped: true
   }' >"$CURRENT_FILE"
 }
 
@@ -1455,8 +1458,13 @@ shape_current_wallpaper() {
   path=$(jq -r '.path // ""' <<<"$cur" 2>/dev/null)
   [[ -n $path && -f $path ]] || return 0
   # Nothing happens when the file is already in shape, which is the normal case.
-  shaped=$(ensure_shaped "$path" 2>/dev/null) || return 0
-  [[ -n $shaped && -f $shaped ]] || return 0
+  if ! shaped=$(ensure_shaped "$path" 2>/dev/null) || [[ -z $shaped || ! -f $shaped ]]; then
+    # Nothing safe can be served from that file. The state stops naming it, so no
+    # interface can open it, and the caller installs a fresh picture instead.
+    jq -c '.path = "" | .shaped = false' <<<"$cur" >"$CURRENT_FILE" 2>/dev/null || true
+    echo "fresque: the picture on screen could not be reshaped, it is no longer named" >&2
+    return 1
+  fi
   [[ $shaped == "$path" ]] && return 0
   apply_local "$shaped" >/dev/null 2>&1 || return 1
   echo "fresque: the picture on screen was an original, rewritten at $shaped" >&2
@@ -1542,12 +1550,14 @@ cmd_unfavorite() {
 # wallpaper, so the answer to "what do I have to do" is nothing at all.
 cmd_init() {
   ensure_config
+  # A state file that outlived an upgrade can still name an original, so it is
+  # shaped first. When nothing can be made of it, the file is no longer named and
+  # a fresh wallpaper takes its place.
+  shape_current_wallpaper
   if [[ -z $(jq -r '.path // ""' <<<"$(cur_json)") ]]; then
     cmd_next
     return $?
   fi
-  # A state file that outlived an upgrade can still name an original.
-  shape_current_wallpaper
   return 0
 }
 

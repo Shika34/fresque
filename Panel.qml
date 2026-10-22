@@ -304,7 +304,11 @@ Panel {
           Image {
             id: hero
             anchors.fill: parent
-            source: root.current.path ? "file://" + root.current.path : ""
+            // Only a picture the engine has rewritten is opened here. A path
+            // left by an older version is refused, whatever its name says,
+            // because decoding it is the exposure this panel would create.
+            source: (root.current.shaped === true && root.current.path)
+              ? "file://" + root.current.path : ""
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             sourceSize.width: Math.round(width)
