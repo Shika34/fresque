@@ -192,6 +192,11 @@ omarchy plugin enable io.github.shika34.fresque
 Any `.qml` edit needs `omarchy-restart-shell`. `rescanPlugins` only discovers
 new folders, it does not reload code.
 
+`scripts/audit.sh` checks the invariants this plugin depends on: no image tool
+outside the memory ceiling, every reply cut at a byte ceiling, no shell in the
+middle, the shaping flag in the state and the gate in the panel, no markup in a
+rendered string, no em dash. Run it before tagging a release.
+
 The engine can be exercised without touching the desktop or the theme folder:
 
 ```sh
