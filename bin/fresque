@@ -211,6 +211,16 @@ image_dimensions() {
 
 # A truncated body, an HTML error page or an SVG (which can pull in remote
 # resources and blow up the renderer) must never become a wallpaper.
+# The bytes, not the name. An older version named the file after the URL suffix,
+# so a source that answered a .jpg request with a PNG left a PNG behind a .jpg
+# name, text chunks and all. Only the first four bytes settle what a file is.
+is_jpeg_file() {
+  local magic
+  [[ -s $1 ]] || return 1
+  magic=$(head -c 4 "$1" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
+  [[ ${magic:0:6} == ffd8ff ]]
+}
+
 verify_image() {
   local file=$1 mime
   [[ -s $file ]] || return 1
@@ -1407,7 +1417,9 @@ ensure_shaped() {
   else
     w=0; h=0
   fi
-  case ${path,,} in *.jpg|*.jpeg) ;; *) needs=1 ;; esac
+  # A name is not a format: the published version stored what the server sent
+  # under the URL's suffix, so a PNG can sit behind a .jpg name.
+  is_jpeg_file "$path" || needs=1
   ((w > 0 && h > 0)) || needs=1
   if ((w > 0 && h > 0)) && ! pixels_ok "$w" "$h"; then needs=1; fi
   if ((needs == 0)); then printf '%s' "$path"; return 0; fi
