@@ -196,14 +196,31 @@ image_ext() {
 # Real pixel size of a downloaded file. libvips ships with Omarchy (the image
 # picker uses it), ImageMagick is a fallback, and when neither is present the
 # size gate is skipped rather than blocking the plugin.
+# Reading a picture is the one operation where the file decides how much memory
+# the reader asks for: a PNG can describe a canvas of gigabytes, or carry text
+# that libpng or libvips inflates before it looks at a single pixel. Every image
+# tool therefore runs in a subshell with a hard ceiling on address space and CPU,
+# whatever tool it is, whether it is measuring or rewriting. A file that exceeds
+# the ceiling makes the tool die, which costs one candidate.
+IMAGE_TOOL_MEM=1048576   # KiB of address space, one gigabyte
+IMAGE_TOOL_CPU=25        # seconds of CPU
+
+bounded_tool() {
+  ( ulimit -v "$IMAGE_TOOL_MEM" 2>/dev/null || true
+    ulimit -t "$IMAGE_TOOL_CPU" 2>/dev/null || true
+    exec "$@" )
+}
+
 image_dimensions() {
   local out
-  if command -v vipsheader >/dev/null 2>&1; then
-    out=$(vipsheader "$1" 2>/dev/null | sed -n 's/.*: \([0-9][0-9]*\)x\([0-9][0-9]*\) .*/\1 \2/p')
+  if command -v magick >/dev/null 2>&1; then
+    out=$(bounded_tool magick -limit memory 256MiB -limit map 512MiB \
+      identify -format '%w %h' "$1" 2>/dev/null)
     [[ -n $out ]] && { printf '%s' "$out"; return 0; }
   fi
-  if command -v magick >/dev/null 2>&1; then
-    out=$(magick identify -format '%w %h' "$1" 2>/dev/null)
+  if command -v vipsheader >/dev/null 2>&1; then
+    out=$(bounded_tool vipsheader "$1" 2>/dev/null |
+      sed -n 's/.*: \([0-9][0-9]*\)x\([0-9][0-9]*\) .*/\1 \2/p')
     [[ -n $out ]] && { printf '%s' "$out"; return 0; }
   fi
   return 1
@@ -1028,13 +1045,13 @@ normalise_image() {
   if command -v magick >/dev/null 2>&1; then
     # The ceilings are for the tool, not for the picture: a hostile file makes
     # magick fail, which costs one candidate, instead of the shell.
-    magick -limit memory 512MiB -limit map 1GiB -limit disk 2GiB \
+    bounded_tool magick -limit memory 512MiB -limit map 1GiB -limit disk 2GiB \
       "$src" -strip -resize "${cap_w}x${cap_h}>" -quality 88 "$dest" 2>/dev/null || return 1
     verify_image "$dest" || return 1
     return 0
   fi
   if command -v vips >/dev/null 2>&1; then
-    vips copy "$src" "$dest" 2>/dev/null || return 1
+    bounded_tool vips copy "$src" "$dest" 2>/dev/null || return 1
     verify_image "$dest" || return 1
     return 0
   fi
