@@ -33,6 +33,13 @@ Item {
   // present, even with rotation off, is a decision, and the service leaves
   // the wallpaper alone.
   property bool freshInstall: false
+  // init runs once per shell start, whether the config was there or not. A
+  // state file that survived an upgrade can name a picture this plugin wrote
+  // before it normalised anything, and both the panel and the background open
+  // that file as soon as the shell is up. init shapes what is on screen, costs
+  // nothing when it is already fine, and installs a first wallpaper only when
+  // there is none.
+  property bool startedUp: false
 
   readonly property double intervalMs: rotateMinutes > 0 ? rotateMinutes * 60000 : 0
 
@@ -100,8 +107,9 @@ Item {
     rotateProcess.running = true
   }
 
-  function installFirst() {
-    if (bootstrapProcess.running) return
+  function startUp() {
+    if (startedUp || bootstrapProcess.running) return
+    startedUp = true
     bootstrapProcess.command = [root.cliPath, "init"]
     bootstrapProcess.running = true
   }
@@ -111,13 +119,16 @@ Item {
     path: root.home + "/.config/omarchy/fresque.json"
     watchChanges: true
     printErrors: false
-    onLoaded: root.applyConfig(text())
+    onLoaded: {
+      root.applyConfig(text())
+      root.startUp()
+    }
     onFileChanged: reload()
     onLoadFailed: {
       // No config yet: this is the fresh install the plugin is judged on.
       root.applyConfig(JSON.stringify({ rotateMinutes: Model.DEFAULT_MINUTES }))
       root.freshInstall = true
-      root.installFirst()
+      root.startUp()
     }
   }
 
