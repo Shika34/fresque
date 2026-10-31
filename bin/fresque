@@ -596,11 +596,33 @@ candidates_bing() {
   collect_unseen "$rows"
 }
 
+# The files of one Commons category, as candidate rows. It is its own function
+# because a category is walked more than once: for the files it holds, and for
+# each of its subcategories.
+wikimedia_files() {
+  local cat=$1 scaled=$2 min_w=$3 min_h=$4 theme=$5
+  curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:$(urlencode "$cat")&gcmtype=file&gcmlimit=100&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=$scaled" |
+    jq -c --argjson minw "$min_w" --argjson minh "$min_h" --arg theme "$theme" \
+      '[.query.pages[]? | (.imageinfo[0] // {}) as $ii | {
+        source: "wikimedia",
+        id: ((.title // "") | sub("^File:"; "")),
+        theme: $theme,
+        full: ($ii.thumburl // $ii.url),
+        alt: ($ii.url // ""),
+        thumb: ($ii.thumburl // $ii.url),
+        width: (($ii.width // 0) | try tonumber catch 0),
+        height: (($ii.height // 0) | try tonumber catch 0),
+        credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
+        link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
+        license: ($ii.extmetadata.LicenseShortName.value // "Free license")
+      } | select(.width >= $minw and .height >= $minh)]' 2>/dev/null
+}
+
 # Wikimedia Commons is where the best freely licensed photography lives. The
 # 3840px thumbnail is fetched rather than the original, because originals are
 # sometimes 60 MB TIFFs and this is a wallpaper, not an archive.
 candidates_wikimedia() {
-  local theme=$1 min_w=$2 min_h=$3 scaled=3840 pool cats cat page rows="[]"
+  local theme=$1 min_w=$2 min_h=$3 scaled=3840 pool cats cat page rows="[]" sub
   ((min_w > scaled)) && scaled=$min_w
   pool=$(catalog_get "$theme" wikimedia | tr ',' '\n' | grep -v '^$')
   [[ -n $pool ]] || { printf '[]'; return 0; }
@@ -610,22 +632,19 @@ candidates_wikimedia() {
   cats=$(printf '%s\n' "$pool" | shuf -n 2)
   for cat in $cats; do
     [[ -n $cat ]] || continue
-    page=$(curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:$(urlencode "$cat")&gcmtype=file&gcmlimit=$PAGE_SIZE&prop=imageinfo&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=$scaled" |
-      jq -c --argjson minw "$min_w" --argjson minh "$min_h" --arg theme "$theme" \
-        '[.query.pages[]? | (.imageinfo[0] // {}) as $ii | {
-          source: "wikimedia",
-          id: ((.title // "") | sub("^File:"; "")),
-          theme: $theme,
-          full: ($ii.thumburl // $ii.url),
-          alt: ($ii.url // ""),
-          thumb: ($ii.thumburl // $ii.url),
-          width: (($ii.width // 0) | try tonumber catch 0),
-          height: (($ii.height // 0) | try tonumber catch 0),
-          credit: (((($ii.extmetadata.Artist.value // "")) | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")) | ltrimstr(" ") | rtrimstr(" ")),
-          link: ("https://commons.wikimedia.org/wiki/" + ((.title // "") | @uri)),
-          license: ($ii.extmetadata.LicenseShortName.value // "Free license")
-        } | select(.width >= $minw and .height >= $minh)]' 2>/dev/null)
+    page=$(wikimedia_files "$cat" "$scaled" "$min_w" "$min_h" "$theme")
     [[ -n $page && $page != "null" ]] && rows=$(jq -c --argjson b "$page" '. + $b' <<<"$rows")
+    # A curated category mostly holds subcategories, and the pictures are one
+    # level down: reading only its direct members gives a rotation twenty-five
+    # files, which it exhausts in an afternoon and then reports as a spent
+    # source. Two subcategories, drawn at random, are opened per category, so a
+    # pass over the same theme never asks the same shelf twice.
+    while IFS= read -r sub; do
+      [[ -n $sub ]] || continue
+      page=$(wikimedia_files "$sub" "$scaled" "$min_w" "$min_h" "$theme")
+      [[ -n $page && $page != "null" ]] && rows=$(jq -c --argjson b "$page" '. + $b' <<<"$rows")
+    done < <(curl_json "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=categorymembers&gcmtitle=Category:$(urlencode "$cat")&gcmtype=subcat&gcmlimit=50" 2>/dev/null |
+      jq -r '[.query.pages[]?.title] | .[] | sub("^Category:"; "")' 2>/dev/null | shuf -n 2)
   done
   printf '%s' "$rows"
 }
@@ -1338,7 +1357,7 @@ cmd_next() {
 # pill, never pile up on the same source.
 cmd_prefetch() {
   ensure_config
-  local want=${1:-2} wh min_w min_h src theme rows pick path count attempts=0
+  local want=${1:-2} wh min_w min_h src theme rows pick path count
   ensure_dir "$STATE_DIR"
   exec 9>"$STATE_DIR/prefetch.lock" 2>/dev/null || return 0
   flock -n 9 || return 0
@@ -1353,9 +1372,24 @@ cmd_prefetch() {
   wh=$(screen_geometry)
   min_w=$(dimension "${wh% *}") || min_w=1920
   min_h=$(dimension "${wh##* }") || min_h=1080
-  while (($(stage_count) < want)) && ((attempts < 4)); do
-    attempts=$((attempts + 1))
-    src=$(pick_source) || break
+
+  # Every source that can answer is asked once, in a random order, and none is
+  # asked twice. Drawing a fixed number of times at random is how the pool ends
+  # up empty while sources still had pictures to give: a weighted draw hands the
+  # same few tries to the same sources, and one whose ids have all been served
+  # spends them all. Asking each one once costs a request per source and never
+  # hides a source behind another.
+  local -a order=()
+  for src in $SOURCE_IDS; do
+    source_enabled "$src" || continue
+    source_matches_preferences "$src" || continue
+    order+=("$src")
+  done
+  ((${#order[@]} > 0)) || return 0
+  mapfile -t order < <(printf '%s\n' "${order[@]}" | shuf)
+
+  for src in "${order[@]}"; do
+    (($(stage_count) < want)) || break
     theme=$(pick_theme_for "$src")
     rows=$(fetch_candidates "$src" "$theme" "$min_w" "$min_h" 2>/dev/null)
     [[ -n $rows && $rows != "null" ]] || continue
