@@ -593,7 +593,9 @@ candidates_bing() {
       license: "Bing, credited to its author"
     }]')
   [[ -n $rows && $rows != "null" ]] || { printf '[]'; return 0; }
-  collect_unseen "$rows"
+  # The pool is offered as it is: which of the eight is served is decided once,
+  # in one place, for every source.
+  printf '%s' "$rows"
 }
 
 # The files of one Commons category, as candidate rows. It is its own function
@@ -989,12 +991,30 @@ choose_candidate() {
   fresh=$(jq -c '[.[] | select(.full != "" and .id != "")]' <<<"$rows" 2>/dev/null)
   [[ $(jq 'length' <<<"${fresh:-[]}" 2>/dev/null) -gt 0 ]] || return 1
 
-  # Everything in this pool has been seen already. Serving it again is how the
-  # same photograph came back; another source will do better, and the caller
-  # moves on to one.
   unseen=$(collect_unseen "$fresh")
-  [[ $(jq 'length' <<<"$unseen" 2>/dev/null) -gt 0 ]] || return 1
-  jq -c --argjson n "$(jq 'length' <<<"$unseen")" '.[ (now * 1000 | floor) % $n ]' <<<"$unseen"
+  if [[ $(jq 'length' <<<"$unseen" 2>/dev/null) -gt 0 ]]; then
+    jq -c --argjson n "$(jq 'length' <<<"$unseen")" '.[ (now * 1000 | floor) % $n ]' <<<"$unseen"
+    return 0
+  fi
+
+  # Everything in this pool has been served before. Instead of failing, which
+  # left the rotation to whatever the fallback had on hand, the picture served
+  # longest ago is served again: the pool becomes a cycle rather than a failure
+  # and the newest photograph is never the one that comes back.
+  local pos best="" bestpos=0
+  while IFS= read -r row; do
+    src=$(jq -r '.source // ""' <<<"$row")
+    id=$(jq -r '.id // ""' <<<"$row")
+    pos=$(awk -F'\t' -v s="$src" -v i="$id" '$1 == s && $2 == i { p = NR } END { print p + 0 }' "$SEEN_FILE" 2>/dev/null)
+    [[ $pos =~ ^[0-9]+$ ]] || pos=0
+    if [[ -z $best ]] || ((pos == 0)) || ((bestpos > 0 && pos < bestpos)); then
+      best=$row
+      bestpos=$pos
+    fi
+  done < <(jq -c '.[]' <<<"$fresh" 2>/dev/null)
+  [[ -n $best ]] || best=$(jq -c '.[0]' <<<"$fresh" 2>/dev/null)
+  [[ -n $best ]] || return 1
+  printf '%s' "$best"
 }
 
 collect_unseen() {
@@ -1341,9 +1361,10 @@ cmd_next() {
   done
 
   if ((rc != 0)); then
-    # Offline, or every source down. A favorite already on disk is a better
-    # answer than leaving the same picture up and calling it a failure.
-    cmd_next_favorite && return 0
+    # Offline, or every source down. The picture on screen stays, and the panel
+    # says so: serving a favorite here turned the same handful into a loop the
+    # user never asked for. Favorites rotate when they are asked to, with
+    # favoritesOnly, not as a silent replacement for a failed draw.
     note_failure
     die "no source could provide a wallpaper right now"
   fi
